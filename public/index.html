@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NodeJS Adaptive Stream</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        body { font-family: system-ui, sans-serif; background: #1a1a1a; color: white; text-align: center; padding: 20px; }
+        #video-container { max-width: 800px; margin: 0 auto; }
+        video { width: 100%; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+        #controls { margin-top: 15px; padding: 15px; background: #333; border-radius: 8px; }
+        select { padding: 8px; border-radius: 4px; font-size: 16px; }
+    </style>
+</head>
+<body>
+
+    <h1>Node.js HLS Streamer</h1>
+
+    <div id="video-container">
+        <video id="video" controls></video>
+        
+        <div id="controls">
+            <label for="quality-select">Quality Selection: </label>
+            <select id="quality-select">
+                <option value="-1">Auto (Adaptive)</option>
+            </select>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const qualitySelect = document.getElementById('quality-select');
+        const streamUrl = 'http:/localhost:12906/videos/master.m3u8';
+
+        if (Hls.isSupported()) {
+            const hls = new Hls();
+            hls.loadSource(streamUrl);
+            hls.attachMedia(video);
+
+            // Once the manifest is loaded, populate quality options
+            hls.on(Hls.Events.MANIFEST_PARSED, function (event, data) {
+                const availableQualities = hls.levels;
+
+                availableQualities.forEach((level, index) => {
+                    const option = document.createElement('option');
+                    option.value = index;
+                    option.text = `${level.height}p (${Math.round(level.bitrate / 1024)} kbps)`;
+                    qualitySelect.appendChild(option);
+                });
+
+                video.play().catch(e => console.log("Autoplay blocked, user must click play."));
+            });
+
+            // Handle user quality selection
+            qualitySelect.addEventListener('change', (e) => {
+                const selectedLevel = parseInt(e.target.value);
+                console.log("Switching to quality level index:", selectedLevel);
+                // -1 is auto, otherwise it's the index of the quality level
+                hls.currentLevel = selectedLevel; 
+            });
+
+        }
+        // Fallback for Safari (native HLS support)
+        else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            video.src = streamUrl;
+            video.addEventListener('loadedmetadata', function() {
+                video.play();
+            });
+            // Note: Safari does not allow manual quality selection via JS easily
+            document.getElementById('controls').innerHTML = "Quality selection handled natively by Safari controls.";
+        }
+    </script>
+</body>
+</html>
