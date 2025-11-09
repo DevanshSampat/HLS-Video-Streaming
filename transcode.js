@@ -4,94 +4,172 @@ const fs = require('fs');
 
 ffmpeg.setFfmpegPath('ffmpeg');
 
-// Configuration
-const INPUT_FILE = path.join(__dirname, 'videos', 'input.mp4');
+// === CONFIGURATION ===
 const OUTPUT_DIR = path.join(__dirname, 'videos', 'hls');
+let INPUT_FILE = '';
 
-if (!fs.existsSync(OUTPUT_DIR)) {
-    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-}
+// function shuffleArray(array) {
+//     let currentIndex = array.length;
+//     let randomIndex;
 
-// Helper to get video metadata
-function getVideoMetadata(filePath) {
+//     // While there remain elements to shuffle.
+//     while (currentIndex !== 0) {
+//         // Pick a remaining element.
+//         randomIndex = Math.floor(Math.random() * currentIndex);
+//         currentIndex--;
+
+//         // And swap it with the current element.
+//         [array[currentIndex], array[randomIndex]] = [
+//             array[randomIndex],
+//             array[currentIndex],
+//         ];
+//     }
+
+//     return array;
+// }
+
+const ALL_VIDEO_QUALITIES = [
+    { height: 144, bitrate: '200k' },
+    { height: 240, bitrate: '400k' },
+    { height: 360, bitrate: '800k' },
+    { height: 480, bitrate: '1200k' },
+    { height: 720, bitrate: '2500k' },
+    { height: 1080, bitrate: '5000k' },
+    { height: 1440, bitrate: '8000k' },
+    { height: 2160, bitrate: '15000k' }
+];
+
+const COMMON_OPTIONS = [
+    '-hls_time', '6',
+    '-hls_list_size', '0',
+    '-hls_playlist_type', 'event', // CHANGED: 'event' allows live playback
+    '-sn', '-dn', '-map_metadata', '-1',
+    '-max_muxing_queue_size', '1024'
+];
+
+// === HELPER: Transcode Single Track ===
+function processTrack(input, mapIndex, output, isVideo, opts = {}) {
     return new Promise((resolve, reject) => {
-        ffmpeg.ffprobe(filePath, (err, metadata) => {
-            if (err) reject(err);
-            else resolve(metadata);
-        });
-    });
-}
+        const cmd = ffmpeg(input).addOutput(output);
+        let specific = ['-map', `0:${mapIndex}`];
 
-async function transcode() {
-    console.log('🔍 Detecting video quality...');
-    const metadata = await getVideoMetadata(INPUT_FILE);
-    const videoStream = metadata.streams.find(s => s.codec_type === 'video');
-    const originalHeight = videoStream.height;
+        if (isVideo) {
+            // Ensure even height for encoder compatibility
+            const safeHeight = Math.round(opts.height / 2) * 2;
+            specific.push(
+                '-an', '-c:v', 'libx264', '-vf', `scale=-2:${safeHeight}`,
+                '-b:v', opts.bitrate, '-maxrate', opts.bitrate, '-bufsize', `${parseInt(opts.bitrate) * 2}k`,
+                '-profile:v', 'main', '-pix_fmt', 'yuv420p', '-crf', '23', '-preset', 'veryfast',
+                '-force_key_frames', 'expr:gte(t,n_forced*6)', '-sc_threshold', '0'
+            );
+        } else {
+            specific.push('-vn', '-c:a', 'aac', '-ac', '2', '-ar', '44100');
+        }
 
-    console.log(`✅ Original Video Height: ${originalHeight}p`);
+        cmd.outputOptions([...specific, ...COMMON_OPTIONS, '-hls_segment_filename', opts.segPath]);
 
-    // Define standard qualities
-    const renditions = [
-        { height: 360, bitrate: '800k' },
-        { height: 720, bitrate: '2500k' },
-        { height: 1080, bitrate: '5000k' },
-        { height: 1440, bitrate: '8000k' },
-        { height: 2160, bitrate: '12000k' }
-    ];
+        let startTime = Date.now();
+        // Log start but don't spam progress for every single track to keep terminal clean
+        console.log(`\n▶️  Starting: ${path.basename(output)}`);
+        cmd.on('progress', (p) => process.stdout.write(`⏳ Processing: ${p.timemark} \r`));
 
-    // Filter renditions that are feasible (don't upscale)
-    const validRenditions = renditions.filter(r => r.height <= originalHeight);
-
-    // If the video is weird (e.g., 500p), ensure we at least have one rendition close to original
-    if (validRenditions.length === 0 || validRenditions[validRenditions.length - 1].height < originalHeight) {
-        validRenditions.push({ height: originalHeight, bitrate: '1000k' });
-    }
-
-    console.log(`⚙️  Starting transcode for: ${validRenditions.map(r => r.height + 'p').join(', ')}`);
-    console.log('☕ This may take several minutes depending on video size...');
-    runCommandForQuality(validRenditions, 0);
-}
-
-async function runCommandForQuality(renditions, index) {
-    if (index === renditions.length) {
-        console.log('✅ Transcoding finished!');
-        createMasterPlaylist(renditions);
-        return;
-    }
-    const rendition = renditions[index];
-    console.log(`🔄 Transcoding to ${rendition.height}p...`);
-    const command = ffmpeg(INPUT_FILE).output(path.join(OUTPUT_DIR, `video_${rendition.height}p.m3u8`))
-        .videoCodec('libx264')
-        .audioCodec('aac')
-        .size(`?x${rendition.height}`) // Maintain aspect ratio
-        .videoBitrate(rendition.bitrate)
-        .format('hls')
-        .outputOptions([
-            '-hls_time 30',           // 30 second chunks
-            '-hls_list_size 0',       // Keep all chunks in playlist
-            '-hls_segment_filename', path.join(OUTPUT_DIR, `video_${rendition.height}p_%03d.ts`)
-        ]);
-    command
-        .on('error', (err) => console.error('❌ An error occurred: ' + err.message))
-        .on('end', () => {
-            console.log('✅ Transcoding finished for ' + rendition.height + 'p');
-            runCommandForQuality(renditions, index + 1);
+        cmd.on('error', (err) => {
+            console.error(`\n❌ FAILED: ${path.basename(output)}`);
+            reject(err);
         })
-        .run();
+            .on('end', () => {
+                const duration = ((Date.now() - startTime) / 1000 / 60).toFixed(2);
+                console.log(`\n✅ Completed: ${path.basename(output)} (${duration} min)`);
+                resolve();
+            });
+
+        cmd.run();
+    });
 }
 
-// Generate the master.m3u8 file that links all valid renditions together
-function createMasterPlaylist(renditions) {
-    console.log('📝 Creating master playlist...');
-    let masterContent = '#EXTM3U\n#EXT-X-VERSION:3\n';
+// === HELPER: Update Master Playlist ===
+function updateMasterPlaylist(activeQualities, audioTracks) {
+    if (activeQualities.length === 0) return;
 
-    renditions.forEach(r => {
-        masterContent += `#EXT-X-STREAM-INF:BANDWIDTH=${parseInt(r.bitrate) * 1000},RESOLUTION=1280x${r.height}\n`;
-        masterContent += `video_${r.height}p.m3u8\n`;
+    let master = '#EXTM3U\n#EXT-X-VERSION:3\n';
+    audioTracks.forEach((t, i) => {
+        master += `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="stereo",LANGUAGE="${t.lang}",NAME="${t.name}",DEFAULT=${i === 0 ? 'YES' : 'NO'},AUTOSELECT=YES,URI="${t.id}.m3u8"\n`;
     });
 
-    fs.writeFileSync(path.join(OUTPUT_DIR, 'master.m3u8'), masterContent);
-    console.log('🚀 Ready to stream! Run server.js now.');
+    activeQualities.forEach(q => {
+        master += `#EXT-X-STREAM-INF:BANDWIDTH=${(parseInt(q.bitrate) + 192) * 1000},RESOLUTION=1280x${q.height},AUDIO="stereo"\nvideo_${q.height}p.m3u8\n`;
+    });
+
+    fs.writeFileSync(path.join(OUTPUT_DIR, 'master.m3u8'), master);
+    console.log('📝 Master playlist updated (new quality available for streaming).');
 }
 
-transcode();
+// === MAIN ===
+async function main() {
+    if (fs.existsSync(OUTPUT_DIR)) { try { fs.rmSync(OUTPUT_DIR, { recursive: true, force: true }); } catch (e) { } }
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+
+    const videoDir = path.join(__dirname, 'videos');
+    if (!fs.existsSync(videoDir)) fs.mkdirSync(videoDir);
+    const files = fs.readdirSync(videoDir).filter(f => !fs.lstatSync(path.join(videoDir, f)).isDirectory());
+    if (files.length === 0) return console.error("❌ No video file found");
+    INPUT_FILE = path.join(videoDir, files[0]);
+    console.log(`📂 Input: ${path.basename(INPUT_FILE)}`);
+
+    ffmpeg.ffprobe(INPUT_FILE, async (err, metadata) => {
+        if (err) return console.error("❌ Metadata error");
+
+        const vStream = metadata.streams.find(s => s.codec_type === 'video');
+        const aStreams = metadata.streams.filter(s => s.codec_type === 'audio');
+        if (!vStream || aStreams.length === 0) return console.error("❌ Missing streams");
+
+        console.log(`🎥 Video Stream: #${vStream.index}, ${vStream.width}x${vStream.height}, ${vStream.codec_name}`);
+
+        const validQualities = ALL_VIDEO_QUALITIES.filter(q => q.height <= vStream.height);
+        if(validQualities.length === 0 || validQualities[validQualities.length -1].height !== vStream.height) {
+            validQualities.push({ height: vStream.height, bitrate: '2000k' });
+        }
+        const audioTracks = aStreams.map((s, i) => ({
+            index: s.index, id: `audio_${i}`,
+            lang: s.tags?.language || 'und', name: s.tags?.title || s.tags?.language || `Track ${i + 1}`
+        }));
+
+        try {
+            // PHASE 1: Audio First (Required for master playlist to work correctly)
+            console.log(`\n🎵 PHASE 1: Processing ${audioTracks.length} Audio Tracks...`);
+            for (const t of audioTracks) {
+                await processTrack(INPUT_FILE, t.index, path.join(OUTPUT_DIR, `${t.id}.m3u8`), false, {
+                    segPath: path.join(OUTPUT_DIR, `${t.id}_%03d.ts`)
+                });
+            }
+
+            // PHASE 2: Video Qualities (Update master BEFORE processing starts)
+            console.log(`\n🎬 PHASE 2: Processing ${validQualities.map(quality => quality.height).toString()} Video Qualities...`);
+            const activeQualities = [];
+
+            for (const q of validQualities) {
+                const isFirst = activeQualities.length === 0;
+                // 1. Add to active list immediately
+                activeQualities.push(q);
+                // 2. Update master playlist SOONER so players can see it
+                if (isFirst) updateMasterPlaylist(activeQualities, audioTracks);
+
+                // 3. Start transcoding this quality. Player will poll and wait for segments.
+                await processTrack(INPUT_FILE, vStream.index, path.join(OUTPUT_DIR, `video_${q.height}p.m3u8`), true, {
+                    height: q.height, bitrate: q.bitrate, segPath: path.join(OUTPUT_DIR, `video_${q.height}p_%03d.ts`)
+                });
+
+                if (!isFirst) {
+                    // 4. Update master playlist after each quality is done
+                    updateMasterPlaylist(activeQualities, audioTracks);
+                }
+            }
+
+            console.log('\n🎉 ALL DONE!');
+        } catch (e) {
+            console.error("\n💥 Process stopped.");
+        }
+    });
+}
+
+main();
