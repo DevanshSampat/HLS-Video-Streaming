@@ -13,12 +13,61 @@ app.use(cors());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
+function filterManifest(originalM3u8, maxQuality) {
+    const lines = originalM3u8.split('\n');
+    let output = [];
+    let keepNextUri = true;
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+
+        if (line.startsWith('#EXT-X-STREAM-INF')) {
+            // It's a variant stream. Check resolution.
+            // Regex to find RESOLUTION=WxH and capture H
+            const resMatch = line.match(/RESOLUTION=\d+x(\d+)/);
+
+            if (resMatch && resMatch[1]) {
+                const height = parseInt(resMatch[1], 10);
+                if (height <= maxQuality) {
+                    output.push(line);
+                    keepNextUri = true;
+                } else {
+                    keepNextUri = false;
+                }
+            } else {
+                // If no resolution tag, standard says keep it or decide a default.
+                // Usually safe to keep if you can't determine quality.
+                output.push(line);
+                keepNextUri = true;
+            }
+        } else if (line.startsWith('#')) {
+            // Other global tags (EXTM3U, EXT-X-MEDIA, etc.) - keep them
+            output.push(line);
+        } else {
+            // This is a URI line. Only keep if the preceding INF tag passed the filter.
+            if (keepNextUri) {
+                output.push(line);
+            }
+        }
+    }
+
+    return output.join('\n');
+}
+
 // Middleware to set correct headers for HLS files
 app.use('/stream', (req, res, next) => {
     const filePath = path.join(__dirname, 'videos', 'hls', req.path);
 
     if (filePath.endsWith('.m3u8')) {
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        if(filePath.endsWith('master.m3u8')) {
+            if(req.query?.maxQuality) {
+                console.log(`Filtering master playlist for max quality: ${req.query.maxQuality}`);
+                return res.send(filterManifest(fs.readFileSync(filePath, 'utf8'), req.query.maxQuality));
+            }
+            return res.download(filePath);
+        }
     } else if (filePath.endsWith('.ts')) {
         res.setHeader('Content-Type', 'video/mp2t');
     }
