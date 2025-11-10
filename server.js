@@ -58,6 +58,25 @@ app.get(`/download`, (req, res) => {
     res.download(videoPath);
 });
 
+app.get("/profile-image", (req, res) => {
+    res.download(`${__dirname}\\profile_image.jpg`);
+  });
+  app.post("/profile-image", (req, res) => {
+    try {
+      const { path } = req.body;
+      const data = fs.readFileSync(path);
+      fs.writeFileSync(`${__dirname}\\profile_image.jpg`, data);
+      res.json({
+        status: "Uploaded",
+        message: `Access your file at ${__dirname}\\profile_image.jpg`,
+      });
+    } catch (exception) {
+      res.statusCode = 500;
+      res.json({ error: exception.toString() });
+    }
+  });
+
+
 app.post("/watch-details", (req, res) => {
     const { body } = req;
     if (!body.firebaseUid) {
