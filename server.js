@@ -104,12 +104,16 @@ app.get("/videos", (req, res) => {
 });
 
 app.get(`/download`, (req, res) => {
+    let filePath = decodeURIComponent(req.query.id);
+    filePath = filePath.substring(filePath.indexOf('streams/')+8);
+    filePath = filePath.substring(0,filePath.lastIndexOf('/'));
     const files = fs.readdirSync(path.join(__dirname, 'videos'));
-    while (files.indexOf("hls") != -1) {
-        files.splice(files.indexOf("hls"), 1);
+    for(let i=0; i<files.length; i++) {
+        if(files[i].substring(0,files[i].lastIndexOf('.')) === (filePath)) {
+            return res.download(path.join(__dirname, 'videos', files[i]));
+        }
     }
-    const videoPath = path.join(__dirname, 'videos', files[0]);
-    res.download(videoPath);
+    return res.status(404).send("File not found");
 });
 
 app.get("/profile-image", (req, res) => {
