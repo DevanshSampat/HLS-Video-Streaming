@@ -1,4 +1,5 @@
 /videos
+/streams
 /node_modules
 /user_watch_data
 .DS_Store

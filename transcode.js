@@ -5,8 +5,12 @@ const fs = require('fs');
 ffmpeg.setFfmpegPath('ffmpeg');
 
 // === CONFIGURATION ===
-const OUTPUT_DIR = path.join(__dirname, 'videos', 'hls');
+let OUTPUT_DIR = path.join(__dirname, 'streams');
 let INPUT_FILE = '';
+
+if(!fs.existsSync(OUTPUT_DIR)) {
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+}
 
 // function shuffleArray(array) {
 //     let currentIndex = array.length;
@@ -105,15 +109,17 @@ function updateMasterPlaylist(activeQualities, audioTracks) {
 }
 
 // === MAIN ===
-async function main() {
-    if (fs.existsSync(OUTPUT_DIR)) { try { fs.rmSync(OUTPUT_DIR, { recursive: true, force: true }); } catch (e) { } }
-    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-
+async function main(fileIndex) {
     const videoDir = path.join(__dirname, 'videos');
     if (!fs.existsSync(videoDir)) fs.mkdirSync(videoDir);
     const files = fs.readdirSync(videoDir).filter(f => !fs.lstatSync(path.join(videoDir, f)).isDirectory());
-    if (files.length === 0) return console.error("❌ No video file found");
-    INPUT_FILE = path.join(videoDir, files[0]);
+    if (files.length <= fileIndex) return console.log("No more files to process.");
+    INPUT_FILE = path.join(videoDir, files[fileIndex]);
+    OUTPUT_DIR = path.join(__dirname, 'streams', path.parse(INPUT_FILE).name);
+    if (fs.existsSync(OUTPUT_DIR)) { 
+        return await main(fileIndex + 1);
+    }
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
     console.log(`📂 Input: ${path.basename(INPUT_FILE)}`);
 
     ffmpeg.ffprobe(INPUT_FILE, async (err, metadata) => {
@@ -126,7 +132,7 @@ async function main() {
         console.log(`🎥 Video Stream: #${vStream.index}, ${vStream.width}x${vStream.height}, ${vStream.codec_name}`);
 
         const validQualities = ALL_VIDEO_QUALITIES.filter(q => q.height <= vStream.height);
-        if(validQualities.length === 0 || validQualities[validQualities.length -1].height !== vStream.height) {
+        if (validQualities.length === 0 || validQualities[validQualities.length - 1].height !== vStream.height) {
             validQualities.push({ height: vStream.height, bitrate: '2000k' });
         }
         const audioTracks = aStreams.map((s, i) => ({
@@ -165,11 +171,13 @@ async function main() {
                 }
             }
 
-            console.log('\n🎉 ALL DONE!');
+            console.log(`\n🏁 All processing complete for ${path.basename(INPUT_FILE)}.`);
+            // Proceed to next file
+            await main(fileIndex + 1);
         } catch (e) {
             console.error("\n💥 Process stopped.");
         }
     });
 }
 
-main();
+main(0);

@@ -57,7 +57,7 @@ function filterManifest(originalM3u8, maxQuality) {
 
 // Middleware to set correct headers for HLS files
 app.use('/stream', (req, res, next) => {
-    const filePath = path.join(__dirname, 'videos', 'hls', req.path);
+    const filePath = path.join(__dirname, decodeURIComponent(req.path));
 
     if (filePath.endsWith('.m3u8')) {
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
@@ -71,12 +71,15 @@ app.use('/stream', (req, res, next) => {
     } else if (filePath.endsWith('.ts')) {
         res.setHeader('Content-Type', 'video/mp2t');
     }
-    console.log(`Serving file: ${req.path}`);
+    console.log(`${filePath.substring(filePath.lastIndexOf('\\streams\\') + 9)}`);
     next();
 });
 
 // Serve the HLS video files
-app.use('/stream', express.static(path.join(__dirname, 'videos', 'hls')));
+app.use('/stream', (req, res) => {
+    const filePath = decodeURIComponent(req.path);
+    res.sendFile(path.join(__dirname, filePath));
+});
 
 app.get('/', (req, res) => {
     res.send("HLS Video Streaming Server is running.");
@@ -85,17 +88,19 @@ app.get('/', (req, res) => {
 app.get("/videos", (req, res) => {
     res.statusCode = 200;
     res.contentType = "application/json";
-    const files = fs.readdirSync(path.join(__dirname, 'videos'));
+    const files = fs.readdirSync(path.join(__dirname, 'streams'));
     while (files.indexOf("hls") != -1) {
         files.splice(files.indexOf("hls"), 1);
     }
-    res.send([
-        {
-            name: files[0].substring(0, files[0].lastIndexOf(".")),
-            path: "master.m3u8",
+    const response = [];
+    for (let i = 0; i < files.length; i++) {
+        response.push({
+            name: files[i],
+            path: `streams/${files[i]}/master.m3u8`,
             subtitle: false
-        }
-    ]);
+        });
+    }
+    res.send(response);
 });
 
 app.get(`/download`, (req, res) => {
