@@ -3,6 +3,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const si = require('systeminformation');
 
 const app = express();
 const PORT = 9000;
@@ -81,8 +82,8 @@ app.use('/stream', (req, res) => {
     res.sendFile(path.join(__dirname, filePath));
 });
 
-app.get('/', (req, res) => {
-    res.send("HLS Video Streaming Server is running.");
+app.get('/', async (req, res) => {
+    res.send(await si.battery());
 });
 
 app.get("/videos", (req, res) => {
