@@ -4,6 +4,9 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const si = require('systeminformation');
+const { exec } = require('child_process');
+const { url } = require('inspector');
+let globalUrl = "";
 
 const app = express();
 const PORT = 9000;
@@ -230,7 +233,7 @@ app.get("/watch-details", (req, res) => {
 });
 
 app.get("/device-name", (req, res) => {
-    res.json({ name: os.hostname() });
+    res.json({ name: os.hostname(), url: globalUrl });
 });
 
 app.listen(PORT, () => {
@@ -250,4 +253,29 @@ app.listen(PORT, () => {
         }
     }
     console.log(`📡 Streaming server running at http://${address}:${PORT}`);
+    bringTailscaleUp();
 });
+
+const bringTailscaleUp = () => {
+    exec(`cd ${__dirname} && tailscale up && tailscale funnel 9000`, (error, stdout, stderr) => {});
+    exec("tailscale status", (error, stdout, stderr) => {
+        const lines = stdout.split('\n');
+        for(let i=0; i<lines.length; i++) {
+            if(lines[i].toLowerCase().includes(os.hostname().toLowerCase())) {
+                exec("tailscale dns status", (error, stdout, stderr) => {
+                    const searchDomainString = stdout.substring(stdout.indexOf("Search Domains:") + 16);
+                    let domain = searchDomainString.substring(searchDomainString.indexOf("- ")+2);
+                    domain = domain.substring(0,domain.indexOf("\n"));
+                    const url = `https://${os.hostname().toLowerCase()}.${domain.trim()}`
+                    if(globalUrl !== url) {
+                        globalUrl = url;
+                        console.log(`🌐 Tailscale URL: ${url}`);
+                    }
+                });
+            }
+        }
+    })
+    setTimeout(() => {
+        bringTailscaleUp();
+    },5 * 60000);
+}
