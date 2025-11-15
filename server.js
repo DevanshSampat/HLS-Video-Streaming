@@ -5,7 +5,6 @@ const fs = require('fs');
 const os = require('os');
 const si = require('systeminformation');
 const { exec } = require('child_process');
-const { url } = require('inspector');
 let globalUrl = "";
 
 const app = express();
@@ -277,5 +276,5 @@ const bringTailscaleUp = () => {
     })
     setTimeout(() => {
         bringTailscaleUp();
-    },5 * 60000);
+    },globalUrl === ""? 5000 : 5 * 60000);
 }
