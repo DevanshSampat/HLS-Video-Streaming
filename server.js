@@ -100,7 +100,7 @@ app.get("/videos", (req, res) => {
         response.push({
             name: files[i],
             path: `streams/${files[i]}/master.m3u8`,
-            subtitle: false
+            subtitle: fs.existsSync(path.join(__dirname, 'subtitles', files[i] + '.srt')),
         });
     }
     res.send(response);
@@ -116,6 +116,22 @@ app.get(`/download`, (req, res) => {
             return res.download(path.join(__dirname, 'videos', files[i]));
         }
     }
+    return res.status(404).send("File not found");
+});
+
+app.get("/subtitles", (req, res) => {
+    console.log(`Subtitle request for: ${req.query.id}`);
+    let filePath = decodeURIComponent(req.query.id);
+    filePath = filePath.substring(filePath.indexOf('streams/')+8);
+    filePath = filePath.substring(0,filePath.lastIndexOf('/'));
+    const files = fs.readdirSync(path.join(__dirname, 'subtitles'));
+    for(let i=0; i<files.length; i++) {
+        if(files[i].substring(0,files[i].lastIndexOf('.')) === (filePath)) {
+            console.log(`Sending subtitle file: ${files[i]}`);
+            return res.download(path.join(__dirname, 'subtitles', files[i]));
+        }
+    }
+    console.log(`Subtitle file not found: ${filePath}`);
     return res.status(404).send("File not found");
 });
 
