@@ -154,11 +154,24 @@ async function processVideo(videoPath, index) {
                 console.log(`   📊 Largest subtitle: ${largest}`);
                 const data = fs.readFileSync(path.join(subtitlesDir, largest), 'utf-8');
 
+                let index = 0;
+                let dataArray = data.replace(/\r\n/g, '\n').split('\n');
+                let processedData = '';
+                while (index < dataArray.length) {
+                    if (dataArray[index].trim() === '') {
+                        if(index + 1 < dataArray.length && /^\d+$/.test(dataArray[index + 1].trim())) {
+                            processedData += '\n';
+                        }
+                    } else {
+                        processedData += dataArray[index] + '\n';
+                    }
+                    index++;
+                }
                 // Save to subtitles folder
                 if (!fs.existsSync(path.join('subtitles'))) {
                     fs.mkdirSync(path.join('subtitles'));
                 }
-                fs.writeFileSync(path.join('subtitles', `${videoName}.srt`), data);
+                fs.writeFileSync(path.join('subtitles', `${videoName}.srt`), processedData);
                 console.log(`   ✨ Saved to: subtitles/${videoName}.srt\n`);
             }
 
@@ -174,6 +187,7 @@ async function main() {
     for (let i = 0; i < videoFiles.length; i++) {
         await processVideo(videoFiles[i], i);
     }
+    deleteFolderRecursive(subtitlesDir);
 
     console.log('═══════════════════════════════════════════════════════════');
     console.log('📊 EXTRACTION SUMMARY');

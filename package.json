@@ -4,6 +4,7 @@
   "description": "",
   "main": "server.js",
   "scripts": {
+    "start": "node extract_subtitles && node transcode && node server",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
