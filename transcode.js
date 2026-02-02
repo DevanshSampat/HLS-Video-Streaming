@@ -131,13 +131,6 @@ async function main() {
         }
     });
     if (id === null) return;
-    const files = fs.readdirSync(path.join(__dirname, 'streams'));
-    files.forEach(f => {
-        if(!fs.existsSync(path.join(__dirname, 'streams', f, 'createdAt.txt'))) {
-            fs.rmdirSync(path.join(__dirname, 'streams', f), { recursive: true });
-            console.log(`🗑️  Deleted incomplete stream directory: ${f}`);
-        }
-    });
     const allStreams = fs.readdirSync(path.join(__dirname, 'streams')).sort((a, b) => {
         const aTime = new Date(Number(fs.readFileSync(path.join(__dirname, 'streams', a, 'createdAt.txt'), 'utf-8')));
         const bTime = new Date(Number(fs.readFileSync(path.join(__dirname, 'streams', b, 'createdAt.txt'), 'utf-8')));
@@ -146,7 +139,7 @@ async function main() {
     if (allStreams.includes(path.join(__dirname, 'streams', id))) {
         return;
     }
-    if(allStreams.length >= 5) {
+    if (allStreams.length >= 5) {
         const dirToDelete = allStreams[allStreams.length - 1];
         fs.rmdirSync(dirToDelete, { recursive: true });
         console.log(`🗑️  Deleted oldest stream directory: ${path.basename(dirToDelete)}`);
@@ -200,7 +193,7 @@ async function main() {
                 await processTrack(INPUT_FILE, vStream.index, path.join(OUTPUT_DIR, `video_${isFirst ? "" : "temp_"}${q.height}p.m3u8`), true, {
                     height: q.height, bitrate: q.bitrate, segPath: path.join(OUTPUT_DIR, `video_${q.height}p_%03d.ts`)
                 });
-                if(!isFirst) {
+                if (!isFirst) {
                     // 4. Rename temp file to official after processing
                     fs.renameSync(
                         path.join(OUTPUT_DIR, `video_temp_${q.height}p.m3u8`),
