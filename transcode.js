@@ -7,8 +7,9 @@ ffmpeg.setFfmpegPath('ffmpeg');
 // === CONFIGURATION ===
 let OUTPUT_DIR = path.join(__dirname, 'streams');
 let INPUT_FILE = '';
+let id = null;
 
-if(!fs.existsSync(OUTPUT_DIR)) {
+if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 }
 
@@ -75,7 +76,7 @@ function processTrack(input, mapIndex, output, isVideo, opts = {}) {
         let startTime = Date.now();
         // Log start but don't spam progress for every single track to keep terminal clean
         console.log(`\n▶️  Starting: ${path.basename(output)}`);
-        cmd.on('progress', (p) => process.stdout.write(`⏳ Processing: ${p.timemark} \r`));
+        if (isVideo) cmd.on('progress', (p) => process.stdout.write(`⏳ Processing: ${p.timemark} \r`));
 
         cmd.on('error', (err) => {
             console.error(`\n❌ FAILED: ${path.basename(output)}`);
@@ -109,15 +110,50 @@ function updateMasterPlaylist(activeQualities, audioTracks) {
 }
 
 // === MAIN ===
-async function main(fileIndex) {
+async function main() {
     const videoDir = path.join(__dirname, 'videos');
     if (!fs.existsSync(videoDir)) fs.mkdirSync(videoDir);
-    const files = fs.readdirSync(videoDir).filter(f => !fs.lstatSync(path.join(videoDir, f)).isDirectory());
-    if (files.length <= fileIndex) return console.log("No more files to process.");
-    INPUT_FILE = path.join(videoDir, files[fileIndex]);
-    OUTPUT_DIR = path.join(__dirname, 'streams', path.parse(INPUT_FILE).name);
-    if (fs.existsSync(OUTPUT_DIR)) { 
-        return await main(fileIndex + 1);
+    const args = process.argv.slice(2);
+    if (args.length === 0) {
+        console.error("❌ Please provide an input video file using --id=");
+        return;
+    }
+    if (!fs.existsSync(path.join(__dirname, 'videos_index.json'))) return;
+    args.forEach(arg => {
+        if (arg.startsWith('--id=')) {
+            id = arg.substring(5);
+            const allVideos = JSON.parse(fs.readFileSync(path.join(__dirname, 'videos_index.json'), 'utf-8'));
+            if (allVideos[id]) {
+                INPUT_FILE = allVideos[id];
+            } else {
+                id = null; // reset id if not found
+            }
+        }
+    });
+    if (id === null) return;
+    const files = fs.readdirSync(path.join(__dirname, 'streams'));
+    files.forEach(f => {
+        if(!fs.existsSync(path.join(__dirname, 'streams', f, 'createdAt.txt'))) {
+            fs.rmdirSync(path.join(__dirname, 'streams', f), { recursive: true });
+            console.log(`🗑️  Deleted incomplete stream directory: ${f}`);
+        }
+    });
+    const allStreams = fs.readdirSync(path.join(__dirname, 'streams')).sort((a, b) => {
+        const aTime = new Date(Number(fs.readFileSync(path.join(__dirname, 'streams', a, 'createdAt.txt'), 'utf-8')));
+        const bTime = new Date(Number(fs.readFileSync(path.join(__dirname, 'streams', b, 'createdAt.txt'), 'utf-8')));
+        return bTime - aTime; // Sort by most recently modified first
+    }).map(f => path.join(__dirname, 'streams', f));
+    if (allStreams.includes(path.join(__dirname, 'streams', id))) {
+        return;
+    }
+    if(allStreams.length >= 5) {
+        const dirToDelete = allStreams[allStreams.length - 1];
+        fs.rmdirSync(dirToDelete, { recursive: true });
+        console.log(`🗑️  Deleted oldest stream directory: ${path.basename(dirToDelete)}`);
+    }
+    OUTPUT_DIR = path.join(__dirname, 'streams', id);
+    if (fs.existsSync(OUTPUT_DIR)) {
+        return;
     }
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
     console.log(`📂 Input: ${path.basename(INPUT_FILE)}`);
@@ -144,7 +180,7 @@ async function main(fileIndex) {
             // PHASE 1: Audio First (Required for master playlist to work correctly)
             console.log(`\n🎵 PHASE 1: Processing ${audioTracks.length} Audio Tracks...`);
             for (const t of audioTracks) {
-                await processTrack(INPUT_FILE, t.index, path.join(OUTPUT_DIR, `${t.id}.m3u8`), false, {
+                processTrack(INPUT_FILE, t.index, path.join(OUTPUT_DIR, `${t.id}.m3u8`), false, {
                     segPath: path.join(OUTPUT_DIR, `${t.id}_%03d.ts`)
                 });
             }
@@ -158,26 +194,27 @@ async function main(fileIndex) {
                 // 1. Add to active list immediately
                 activeQualities.push(q);
                 // 2. Update master playlist SOONER so players can see it
-                if (isFirst) updateMasterPlaylist(activeQualities, audioTracks);
+                if (isFirst) updateMasterPlaylist(validQualities, audioTracks);
 
                 // 3. Start transcoding this quality. Player will poll and wait for segments.
-                await processTrack(INPUT_FILE, vStream.index, path.join(OUTPUT_DIR, `video_${q.height}p.m3u8`), true, {
+                await processTrack(INPUT_FILE, vStream.index, path.join(OUTPUT_DIR, `video_${isFirst ? "" : "temp_"}${q.height}p.m3u8`), true, {
                     height: q.height, bitrate: q.bitrate, segPath: path.join(OUTPUT_DIR, `video_${q.height}p_%03d.ts`)
                 });
-
-                if (!isFirst) {
-                    // 4. Update master playlist after each quality is done
-                    updateMasterPlaylist(activeQualities, audioTracks);
+                if(!isFirst) {
+                    // 4. Rename temp file to official after processing
+                    fs.renameSync(
+                        path.join(OUTPUT_DIR, `video_temp_${q.height}p.m3u8`),
+                        path.join(OUTPUT_DIR, `video_${q.height}p.m3u8`)
+                    );
                 }
             }
-
+            fs.writeFileSync(path.join(OUTPUT_DIR, 'createdAt.txt'), `${Date.now()}`);
             console.log(`\n🏁 All processing complete for ${path.basename(INPUT_FILE)}.`);
             // Proceed to next file
-            await main(fileIndex + 1);
         } catch (e) {
             console.error("\n💥 Process stopped.");
         }
     });
 }
 
-main(0);
+main();

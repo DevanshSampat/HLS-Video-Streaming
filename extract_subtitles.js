@@ -3,8 +3,8 @@ const path = require('path');
 const fs = require('fs');
 ffmpeg.setFfmpegPath('ffmpeg');
 
-const videoDir = path.join(__dirname, 'videos');
 const subtitlesDir = path.join(__dirname, 'extracted_subtitles');
+let id = null;
 
 // Create output directory
 if (!fs.existsSync(subtitlesDir)) {
@@ -12,10 +12,23 @@ if (!fs.existsSync(subtitlesDir)) {
 }
 
 // Get all video files
-const videoFiles = fs.readdirSync(videoDir)
-    .filter(f => !fs.lstatSync(path.join(videoDir, f)).isDirectory())
-    .map(f => path.join(videoDir, f));
-
+const videoFiles = [];
+const args = process.argv.slice(2);
+if(!fs.existsSync(path.join(__dirname, 'videos_index.json'))) return;
+const allVideos = JSON.parse(fs.readFileSync(path.join(__dirname, 'videos_index.json'), 'utf-8'));
+if (args.length > 0) {
+    args.forEach(arg => {
+        if (arg.startsWith('--id=')) {
+            id = arg.substring(5);
+            if (allVideos[id]) {
+                videoFiles.push(allVideos[id]);
+            } else {
+                id = null; // reset id if not found
+            }
+        }
+    });
+}
+if (id === null) return;
 console.log(`📁 Found ${videoFiles.length} video files\n`);
 
 let allEnglishSubtitles = [];
@@ -45,7 +58,7 @@ async function processVideo(videoPath, index) {
     return new Promise((resolve, reject) => {
         const videoName = path.basename(videoPath, path.extname(videoPath));
         console.log(`🎬 [${index + 1}/${videoFiles.length}] Analyzing: ${path.basename(videoPath)}`);
-        if(fs.existsSync(path.join(__dirname, 'subtitles', `${videoName}.srt`))) {
+        if (fs.existsSync(path.join(__dirname, 'subtitles', `${id}.srt`))) {
             console.log(`   ℹ️  Subtitles already extracted\n`);
             return resolve();
         }
@@ -159,7 +172,7 @@ async function processVideo(videoPath, index) {
                 let processedData = '';
                 while (index < dataArray.length) {
                     if (dataArray[index].trim() === '') {
-                        if(index + 1 < dataArray.length && /^\d+$/.test(dataArray[index + 1].trim())) {
+                        if (index + 1 < dataArray.length && /^\d+$/.test(dataArray[index + 1].trim())) {
                             processedData += '\n';
                         }
                     } else {
@@ -171,8 +184,8 @@ async function processVideo(videoPath, index) {
                 if (!fs.existsSync(path.join('subtitles'))) {
                     fs.mkdirSync(path.join('subtitles'));
                 }
-                fs.writeFileSync(path.join('subtitles', `${videoName}.srt`), processedData);
-                console.log(`   ✨ Saved to: subtitles/${videoName}.srt\n`);
+                fs.writeFileSync(path.join('subtitles', `${id}.srt`), processedData);
+                console.log(`   ✨ Saved to: subtitles/${id}.srt\n`);
             }
 
             resolve();
