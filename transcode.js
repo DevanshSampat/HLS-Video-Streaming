@@ -101,7 +101,9 @@ function updateMasterPlaylist(activeQualities, audioTracks) {
         master += `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="stereo",LANGUAGE="${t.lang}",NAME="${t.name}",DEFAULT=${i === 0 ? 'YES' : 'NO'},AUTOSELECT=YES,URI="${t.id}.m3u8"\n`;
     });
 
-    activeQualities.forEach(q => {
+    [...activeQualities].sort((a, b) => { 
+        return a.height - b.height; // Sort from lowest to highest
+    }).forEach(q => {
         master += `#EXT-X-STREAM-INF:BANDWIDTH=${(parseInt(q.bitrate) + 192) * 1000},RESOLUTION=1280x${q.height},AUDIO="stereo"\nvideo_${q.height}p.m3u8\n`;
     });
 
@@ -169,6 +171,25 @@ async function main() {
             lang: s.tags?.language || 'und', name: s.tags?.title || s.tags?.language || `Track ${i + 1}`
         }));
 
+        const args = process.argv.slice(2);
+        let prioritizedQualityIndex = 0;
+        args.forEach(arg => {
+            if (arg.startsWith('--quality=')) {
+                const qHeight = parseInt(arg.substring(10));
+                for (let i = 0; i < validQualities.length; i++) {
+                    if (validQualities[i].height <= qHeight) {
+                        prioritizedQualityIndex = i;
+                    }
+                }
+            }
+        });
+
+        // Move prioritized quality to the front
+        if (prioritizedQualityIndex > 0) {
+            const [pq] = validQualities.splice(prioritizedQualityIndex, 1);
+            validQualities.unshift(pq);
+        }
+
         try {
             // PHASE 1: Audio First (Required for master playlist to work correctly)
             console.log(`\n🎵 PHASE 1: Processing ${audioTracks.length} Audio Tracks...`);
@@ -183,6 +204,11 @@ async function main() {
             const activeQualities = [];
 
             for (const q of validQualities) {
+                console.log(q);
+            }
+
+            for (const q of validQualities) {
+                console.log(`\n🔹 Starting processing for ${q.height}p...`);
                 const isFirst = activeQualities.length === 0;
                 // 1. Add to active list immediately
                 activeQualities.push(q);

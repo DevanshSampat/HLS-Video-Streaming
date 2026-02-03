@@ -83,6 +83,7 @@ app.use(express.json());
 function filterManifest(originalM3u8, maxQuality) {
     const lines = originalM3u8.split('\n');
     let output = [];
+    let finalLine = '';
     let keepNextUri = true;
 
     for (let i = 0; i < lines.length; i++) {
@@ -97,15 +98,13 @@ function filterManifest(originalM3u8, maxQuality) {
             if (resMatch && resMatch[1]) {
                 const height = parseInt(resMatch[1], 10);
                 if (height <= maxQuality) {
-                    output.push(line);
-                    keepNextUri = true;
-                } else {
+                    finalLine = line+"\n"+lines[++i];
                     keepNextUri = false;
                 }
             } else {
                 // If no resolution tag, standard says keep it or decide a default.
                 // Usually safe to keep if you can't determine quality.
-                output.push(line);
+                finalLine = line;
                 keepNextUri = true;
             }
         } else if (line.startsWith('#')) {
@@ -118,7 +117,8 @@ function filterManifest(originalM3u8, maxQuality) {
             }
         }
     }
-
+    output.push(finalLine);
+  
     return output.join('\n');
 }
 
@@ -132,13 +132,11 @@ app.use('/stream', (req, res, next) => {
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
         if (filePath.endsWith('master.m3u8')) {
             if (!fs.existsSync(filePath.substring(0,filePath.lastIndexOf('/')))) {
-                console.log(`Starting processing for file: ${filePath}`);
                 execSync(`cd ${__dirname} && node extract_subtitles.js --id=${id}`, (error, stdout, stderr) => { });
-                exec(`cd ${__dirname} && node transcode.js --id=${id}`, (error, stdout, stderr) => { });
+                exec(`cd ${__dirname} && node transcode.js --id=${id}${req.query?.maxQuality ? ` --quality=${req.query.maxQuality}`:""}`, (error, stdout, stderr) => { });
             }
             waitForFile(filePath, 1000, () => {
                 if (req.query?.maxQuality) {
-                    console.log(`Filtering master playlist for max quality: ${req.query.maxQuality}`);
                     res.send(filterManifest(fs.readFileSync(filePath, 'utf8'), req.query.maxQuality));
                 } else {
                     res.download(filePath);
@@ -200,18 +198,15 @@ app.get(`/download`, (req, res) => {
 });
 
 app.get("/subtitles", (req, res) => {
-    console.log(`Subtitle request for: ${req.query.id}`);
     let filePath = decodeURIComponent(req.query.id);
     filePath = filePath.substring(filePath.indexOf('streams/') + 8);
     filePath = filePath.substring(0, filePath.lastIndexOf('/'));
     const files = fs.readdirSync(path.join(__dirname, 'subtitles'));
     for (let i = 0; i < files.length; i++) {
         if (files[i].substring(0, files[i].lastIndexOf('.')) === (filePath)) {
-            console.log(`Sending subtitle file: ${files[i]}`);
             return res.download(path.join(__dirname, 'subtitles', files[i]));
         }
     }
-    console.log(`Subtitle file not found: ${filePath}`);
     return res.status(404).send("File not found");
 });
 
