@@ -132,8 +132,8 @@ async function main() {
     });
     if (id === null) return;
     const allStreams = fs.readdirSync(path.join(__dirname, 'streams')).sort((a, b) => {
-        const aTime = new Date(Number(fs.readFileSync(path.join(__dirname, 'streams', a, 'createdAt.txt'), 'utf-8')));
-        const bTime = new Date(Number(fs.readFileSync(path.join(__dirname, 'streams', b, 'createdAt.txt'), 'utf-8')));
+        const aTime = fs.existsSync(path.join(__dirname, 'streams', a, 'createdAt.txt')) ? Number(fs.readFileSync(path.join(__dirname, 'streams', a, 'createdAt.txt'), 'utf-8')) : Number.MAX_SAFE_INTEGER;
+        const bTime = fs.existsSync(path.join(__dirname, 'streams', b, 'createdAt.txt')) ? Number(fs.readFileSync(path.join(__dirname, 'streams', b, 'createdAt.txt'), 'utf-8')) : Number.MAX_SAFE_INTEGER;
         return bTime - aTime; // Sort by most recently modified first
     }).map(f => path.join(__dirname, 'streams', f));
     if (allStreams.includes(path.join(__dirname, 'streams', id))) {
