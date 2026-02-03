@@ -189,7 +189,7 @@ async function main() {
         if(!isQualitySpecified) {
             for(let i=validQualities.length -1; i>=0; i--) {
                 const quality = ALL_VIDEO_QUALITIES.find(q => q.height === validQualities[i].height);
-                if(quality) {
+                if(quality && quality.height <= 720) {
                     prioritizedQualityIndex = i;
                     break;
                 }
