@@ -1,6 +1,7 @@
 const ffmpeg = require('fluent-ffmpeg');
 const path = require('path');
 const fs = require('fs');
+const { ALL } = require('dns');
 
 ffmpeg.setFfmpegPath('ffmpeg');
 
@@ -173,8 +174,10 @@ async function main() {
 
         const args = process.argv.slice(2);
         let prioritizedQualityIndex = 0;
+        let isQualitySpecified = false;
         args.forEach(arg => {
             if (arg.startsWith('--quality=')) {
+                isQualitySpecified = true;
                 const qHeight = parseInt(arg.substring(10));
                 for (let i = 0; i < validQualities.length; i++) {
                     if (validQualities[i].height <= qHeight) {
@@ -183,6 +186,15 @@ async function main() {
                 }
             }
         });
+        if(!isQualitySpecified) {
+            for(let i=validQualities.length -1; i>=0; i--) {
+                const quality = ALL_VIDEO_QUALITIES.find(q => q.height === validQualities[i].height);
+                if(quality) {
+                    prioritizedQualityIndex = i;
+                    break;
+                }
+            }
+        }
 
         // Move prioritized quality to the front
         if (prioritizedQualityIndex > 0) {
