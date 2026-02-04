@@ -193,7 +193,6 @@ app.get(`/download`, (req, res) => {
     filePath = filePath.substring(filePath.indexOf('streams/') + 8);
     filePath = filePath.substring(0, filePath.lastIndexOf('/'));
     filePath = fileIdPathMap[filePath];
-    console.log(`Serving stream file: ${filePath}`);
     res.download(filePath);
 });
 
