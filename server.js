@@ -326,6 +326,7 @@ app.get("/device-name", (req, res) => {
 });
 
 app.listen(PORT, () => {
+    if(fs.existsSync(path.join(__dirname, 'isProcessing.txt'))) fs.unlinkSync(path.join(__dirname, 'isProcessing.txt'));
     let address = "no address";
     let { WiFi } = os.networkInterfaces();
     if (!WiFi) {

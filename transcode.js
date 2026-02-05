@@ -102,7 +102,7 @@ function updateMasterPlaylist(activeQualities, audioTracks) {
         master += `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="stereo",LANGUAGE="${t.lang}",NAME="${t.name}",DEFAULT=${i === 0 ? 'YES' : 'NO'},AUTOSELECT=YES,URI="${t.id}.m3u8"\n`;
     });
 
-    [...activeQualities].sort((a, b) => { 
+    [...activeQualities].sort((a, b) => {
         return a.height - b.height; // Sort from lowest to highest
     }).forEach(q => {
         master += `#EXT-X-STREAM-INF:BANDWIDTH=${(parseInt(q.bitrate) + 192) * 1000},RESOLUTION=1280x${q.height},AUDIO="stereo"\nvideo_${q.height}p.m3u8\n`;
@@ -140,7 +140,10 @@ async function main() {
         return bTime - aTime; // Sort by most recently modified first
     }).map(f => path.join(__dirname, 'streams', f));
     if (allStreams.includes(path.join(__dirname, 'streams', id))) {
-        return;
+        if (fs.readdirSync(path.join(__dirname, 'streams', id)).length > 1) {
+            console.log(`🔄 Stream already exists: ${id}`);
+            return;
+        }
     }
     if (allStreams.length >= 5) {
         const dirToDelete = allStreams[allStreams.length - 1];
@@ -148,9 +151,6 @@ async function main() {
         console.log(`🗑️  Deleted oldest stream directory: ${path.basename(dirToDelete)}`);
     }
     OUTPUT_DIR = path.join(__dirname, 'streams', id);
-    if (fs.existsSync(OUTPUT_DIR)) {
-        return;
-    }
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
     console.log(`📂 Input: ${path.basename(INPUT_FILE)}`);
 
@@ -160,8 +160,6 @@ async function main() {
         const vStream = metadata.streams.find(s => s.codec_type === 'video');
         const aStreams = metadata.streams.filter(s => s.codec_type === 'audio');
         if (!vStream || aStreams.length === 0) return console.error("❌ Missing streams");
-
-        console.log(`🎥 Video Stream: #${vStream.index}, ${vStream.width}x${vStream.height}, ${vStream.codec_name}`);
 
         const validQualities = ALL_VIDEO_QUALITIES.filter(q => q.height <= vStream.height);
         if (validQualities.length === 0 || validQualities[validQualities.length - 1].height !== vStream.height) {
@@ -186,10 +184,10 @@ async function main() {
                 }
             }
         });
-        if(!isQualitySpecified) {
-            for(let i=validQualities.length -1; i>=0; i--) {
+        if (!isQualitySpecified) {
+            for (let i = validQualities.length - 1; i >= 0; i--) {
                 const quality = ALL_VIDEO_QUALITIES.find(q => q.height === validQualities[i].height);
-                if(quality && quality.height <= 1080) {
+                if (quality && quality.height <= 1080) {
                     prioritizedQualityIndex = i;
                     break;
                 }
@@ -203,6 +201,16 @@ async function main() {
         }
 
         try {
+            updateMasterPlaylist(validQualities, audioTracks);
+            if (fs.existsSync(path.join(__dirname, "isProcessing.txt"))) {
+                console.log("⏳ Another process is currently running. Retrying in 5 seconds...");
+                setTimeout(() => {
+                    main(); // Retry after delay
+                }, 5000);
+                return;
+            }
+            console.log(`🎥 Video Stream: #${vStream.index}, ${vStream.width}x${vStream.height}, ${vStream.codec_name}`);
+            fs.writeFileSync(path.join(__dirname, "isProcessing.txt"), "true");
             // PHASE 1: Audio First (Required for master playlist to work correctly)
             console.log(`\n🎵 PHASE 1: Processing ${audioTracks.length} Audio Tracks...`);
             for (const t of audioTracks) {
@@ -224,15 +232,12 @@ async function main() {
                 const isFirst = activeQualities.length === 0;
                 // 1. Add to active list immediately
                 activeQualities.push(q);
-                // 2. Update master playlist SOONER so players can see it
-                if (isFirst) updateMasterPlaylist(validQualities, audioTracks);
-
-                // 3. Start transcoding this quality. Player will poll and wait for segments.
+                // 2. Start transcoding this quality. Player will poll and wait for segments.
                 await processTrack(INPUT_FILE, vStream.index, path.join(OUTPUT_DIR, `video_${isFirst ? "" : "temp_"}${q.height}p.m3u8`), true, {
                     height: q.height, bitrate: q.bitrate, segPath: path.join(OUTPUT_DIR, `video_${q.height}p_%03d.ts`)
                 });
                 if (!isFirst) {
-                    // 4. Rename temp file to official after processing
+                    // 3. Rename temp file to official after processing
                     fs.renameSync(
                         path.join(OUTPUT_DIR, `video_temp_${q.height}p.m3u8`),
                         path.join(OUTPUT_DIR, `video_${q.height}p.m3u8`)
@@ -241,6 +246,7 @@ async function main() {
             }
             fs.writeFileSync(path.join(OUTPUT_DIR, 'createdAt.txt'), `${Date.now()}`);
             console.log(`\n🏁 All processing complete for ${path.basename(INPUT_FILE)}.`);
+            fs.unlinkSync(path.join(__dirname, "isProcessing.txt"));
             // Proceed to next file
         } catch (e) {
             console.error("\n💥 Process stopped.");
