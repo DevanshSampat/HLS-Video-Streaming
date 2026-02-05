@@ -210,7 +210,7 @@ async function main() {
                 return;
             }
             console.log(`🎥 Video Stream: #${vStream.index}, ${vStream.width}x${vStream.height}, ${vStream.codec_name}`);
-            fs.writeFileSync(path.join(__dirname, "isProcessing.txt"), "true");
+            fs.writeFileSync(path.join(__dirname, "isProcessing.txt"), id);
             // PHASE 1: Audio First (Required for master playlist to work correctly)
             console.log(`\n🎵 PHASE 1: Processing ${audioTracks.length} Audio Tracks...`);
             for (const t of audioTracks) {
