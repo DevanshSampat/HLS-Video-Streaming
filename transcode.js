@@ -9,6 +9,7 @@ ffmpeg.setFfmpegPath('ffmpeg');
 let OUTPUT_DIR = path.join(__dirname, 'streams');
 let INPUT_FILE = '';
 let id = null;
+let lastFileUpdateTime = 0;
 
 if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
@@ -54,7 +55,7 @@ const COMMON_OPTIONS = [
 ];
 
 // === HELPER: Transcode Single Track ===
-function processTrack(input, mapIndex, output, isVideo, opts = {}) {
+function processTrack(input, mapIndex, output, isVideo, opts = {}, metadata, quality, validQualities) {
     return new Promise((resolve, reject) => {
         const cmd = ffmpeg(input).addOutput(output);
         let specific = ['-map', `0:${mapIndex}`];
@@ -77,7 +78,10 @@ function processTrack(input, mapIndex, output, isVideo, opts = {}) {
         let startTime = Date.now();
         // Log start but don't spam progress for every single track to keep terminal clean
         console.log(`\n▶️  Starting: ${path.basename(output)}`);
-        if (isVideo) cmd.on('progress', (p) => process.stdout.write(`⏳ Processing: ${p.timemark} \r`));
+        if (isVideo) cmd.on('progress', (p) => {
+            process.stdout.write(`⏳ Processing: ${p.timemark} \r`)
+            updateCurrentQualityOnProcessingFile(quality, validQualities, p.timemark, metadata);
+        });
 
         cmd.on('error', (err) => {
             console.error(`\n❌ FAILED: ${path.basename(output)}`);
@@ -145,9 +149,12 @@ async function main() {
             return;
         }
     }
+    if (allStreams.includes(path.join(__dirname, 'streams', id))) {
+        allStreams.splice(allStreams.indexOf(path.join(__dirname, 'streams', id)), 1); // Remove current stream from deletion consideration
+    }
     if (allStreams.length >= 5) {
         const dirToDelete = allStreams[allStreams.length - 1];
-        fs.rmdirSync(dirToDelete, { recursive: true });
+        fs.rmdirSync(dirToDelete);
         console.log(`🗑️  Deleted oldest stream directory: ${path.basename(dirToDelete)}`);
     }
     OUTPUT_DIR = path.join(__dirname, 'streams', id);
@@ -202,6 +209,7 @@ async function main() {
 
         try {
             updateMasterPlaylist(validQualities, audioTracks);
+            console.log(metadata.format.duration);
             if (fs.existsSync(path.join(__dirname, "isProcessing.txt"))) {
                 console.log("⏳ Another process is currently running. Retrying in 5 seconds...");
                 setTimeout(() => {
@@ -229,13 +237,14 @@ async function main() {
 
             for (const q of validQualities) {
                 console.log(`\n🔹 Starting processing for ${q.height}p...`);
+                updateCurrentQualityOnProcessingFile(q, validQualities, "00:00:00", metadata);
                 const isFirst = activeQualities.length === 0;
                 // 1. Add to active list immediately
                 activeQualities.push(q);
                 // 2. Start transcoding this quality. Player will poll and wait for segments.
                 await processTrack(INPUT_FILE, vStream.index, path.join(OUTPUT_DIR, `video_${isFirst ? "" : "temp_"}${q.height}p.m3u8`), true, {
                     height: q.height, bitrate: q.bitrate, segPath: path.join(OUTPUT_DIR, `video_${q.height}p_%03d.ts`)
-                });
+                }, metadata, q, validQualities);
                 if (!isFirst) {
                     // 3. Rename temp file to official after processing
                     fs.renameSync(
@@ -252,6 +261,24 @@ async function main() {
             console.error("\n💥 Process stopped.");
         }
     });
+}
+
+const updateCurrentQualityOnProcessingFile = (quality, allQualities, timeMark, metadata) => {
+    let percent = 0;
+    timeMark = timeMark.split('.')[0]; // Remove milliseconds
+    const timeParts = timeMark.split(':').map(Number);
+    if (timeParts.length === 3) {
+        const seconds = timeParts[0] * 3600 + timeParts[1] * 60 + timeParts[2];
+        percent = metadata.format.duration ? ((seconds / Math.ceil(metadata.format.duration)) * 100).toFixed(2) : "0.00";
+    }
+    if (lastFileUpdateTime < Date.now() - 2000) { // Limit updates to every 2 seconds
+        lastFileUpdateTime = Date.now();
+        let dataToPut = id;
+        for (const q of allQualities) {
+            dataToPut += `\n${q === quality ? " • " : "   "}${q.height}p${q === quality ? ` (${percent}%)` : ""}`;
+        }
+        fs.writeFileSync(path.join(__dirname, "isProcessing.txt"), dataToPut);
+    }
 }
 
 main();
