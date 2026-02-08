@@ -35,6 +35,23 @@ if (!fs.existsSync(OUTPUT_DIR)) {
 //     return array;
 // }
 
+const deleteFolderRecursive = (dirPath) => {
+    if (fs.existsSync(dirPath)) {
+        fs.readdirSync(dirPath).forEach(function (file) {
+            var curPath = dirPath + "/" + file;
+            if (fs.lstatSync(curPath).isDirectory()) {
+                // recurse
+                deleteFolderRecursive(curPath);
+            } else {
+                // delete file
+                fs.unlinkSync(curPath);
+            }
+        });
+        fs.rmdirSync(dirPath);
+    }
+};
+
+
 const ALL_VIDEO_QUALITIES = [
     { height: 144, bitrate: '200k' },
     { height: 240, bitrate: '400k' },
@@ -154,7 +171,7 @@ async function main() {
     }
     if (allStreams.length >= 5) {
         const dirToDelete = allStreams[allStreams.length - 1];
-        fs.rmdirSync(dirToDelete);
+        deleteFolderRecursive(dirToDelete);
         console.log(`🗑️  Deleted oldest stream directory: ${path.basename(dirToDelete)}`);
     }
     OUTPUT_DIR = path.join(__dirname, 'streams', id);
