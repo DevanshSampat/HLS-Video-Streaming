@@ -4,6 +4,7 @@
 /streams
 /node_modules
 /user_watch_data
+/streamer
 .DS_Store
 videos_index.json
 isProcessing.txt
