@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "git pull && npm install && node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "nvm use 20.10.0 && nexe ./  -o ./streamvilla-localhost.exe --build --verbose && nvm use 24.13.0 arm64"
   },
   "author": "",
   "license": "ISC",

@@ -8,6 +8,10 @@ const crypto = require('crypto');
 const { exec } = require('child_process');
 const { execSync } = require('child_process');
 const e = require('express');
+const http = require('http');
+const httpPort = 6969;
+let serverIpAddressResponse;
+
 let globalUrl = "";
 
 const fileIdPathMap = {};
@@ -16,6 +20,18 @@ const app = express();
 const PORT = 9000;
 
 app.use(cors());
+
+http.createServer((req, res) => {
+    if (req.url == "/server-ip-address-for-streamvilla") {
+        if (globalUrl !== "") {
+            res.end(globalUrl);
+        }
+        serverIpAddressResponse = res;
+    } else {
+        res.end("no");
+    }
+}).listen(httpPort);
+
 
 const deleteFolderRecursive = (dirPath) => {
     if (fs.existsSync(dirPath)) {
@@ -43,7 +59,7 @@ files.forEach(f => {
 });
 
 const getFolderPathToCastVideos = () => {
-    if(fs.existsSync(path.join(__dirname, 'path.txt'))) {
+    if (fs.existsSync(path.join(__dirname, 'path.txt'))) {
         return fs.readFileSync(path.join(__dirname, 'path.txt'), 'utf8').replaceAll('\\', '/');
     }
     // This single-line command prevents "MissingEndCurlyBrace" errors
@@ -101,7 +117,7 @@ function filterManifest(originalM3u8, maxQuality) {
             if (resMatch && resMatch[1]) {
                 const height = parseInt(resMatch[1], 10);
                 if (height <= maxQuality) {
-                    finalLine = line+"\n"+lines[++i];
+                    finalLine = line + "\n" + lines[++i];
                     keepNextUri = false;
                 }
             } else {
@@ -121,7 +137,7 @@ function filterManifest(originalM3u8, maxQuality) {
         }
     }
     output.push(finalLine);
-  
+
     return output.join('\n');
 }
 
@@ -134,9 +150,9 @@ app.use('/stream', (req, res, next) => {
     if (filePath.endsWith('.m3u8')) {
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
         if (filePath.endsWith('master.m3u8')) {
-            if (!fs.existsSync(filePath.substring(0,filePath.lastIndexOf('/')))) {
+            if (!fs.existsSync(filePath.substring(0, filePath.lastIndexOf('/')))) {
                 execSync(`cd ${__dirname} && node extract_subtitles.js --id=${id}`, (error, stdout, stderr) => { });
-                exec(`cd ${__dirname} && node transcode.js --id=${id}${req.query?.maxQuality ? ` --quality=${req.query.maxQuality}`:""}`, (error, stdout, stderr) => { });
+                exec(`cd ${__dirname} && node transcode.js --id=${id}${req.query?.maxQuality ? ` --quality=${req.query.maxQuality}` : ""}`, (error, stdout, stderr) => { });
             }
             waitForFile(filePath, 1000, () => {
                 if (req.query?.maxQuality) {
@@ -165,7 +181,7 @@ const waitForFile = (filePath, timeout, callback) => {
 // Serve the HLS video files
 app.use('/stream', (req, res) => {
     const filePath = path.join(__dirname, decodeURIComponent(req.path)).replaceAll('\\', '/');
-    if(fs.existsSync(filePath)) res.sendFile(filePath);
+    if (fs.existsSync(filePath)) res.sendFile(filePath);
     else res.status(404).send("File not found");
 });
 
@@ -328,8 +344,12 @@ app.get("/device-name", (req, res) => {
     res.json({ name: os.hostname(), url: globalUrl });
 });
 
+app.post("/stop", (req, res) => {
+    res.send("ok");
+    process.exit(0);
+});
 app.listen(PORT, () => {
-    if(fs.existsSync(path.join(__dirname, 'isProcessing.txt'))) fs.unlinkSync(path.join(__dirname, 'isProcessing.txt'));
+    if (fs.existsSync(path.join(__dirname, 'isProcessing.txt'))) fs.unlinkSync(path.join(__dirname, 'isProcessing.txt'));
     let address = "no address";
     let { WiFi } = os.networkInterfaces();
     if (!WiFi) {
@@ -372,6 +392,10 @@ const bringTailscaleUp = () => {
                     if (globalUrl !== url) {
                         globalUrl = url;
                         console.log(`🌐 Tailscale URL: ${url}`);
+                    }
+                    if (serverIpAddressResponse) {
+                        serverIpAddressResponse.end(url);
+                        serverIpAddressResponse = null;
                     }
                 });
             }

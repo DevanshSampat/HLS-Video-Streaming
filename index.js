@@ -50,15 +50,27 @@ const checkNodeVersion = () => {
 
 const checkGitRepository = () => {
     if (fs.existsSync(`${__dirname}/streamer`)) {
-        execSync(`cd "${__dirname}/streamer" && npm run start`);
+        startServer();
     } else {
         exec(`git clone https://github.com/DevanshSampat/HLS-Video-Streaming.git "${__dirname}/streamer"`, (error, stdout, stderr) => {
             if (error) {
                 prepareFailureMessage("Failed to clone the Git repository.");
             } else {
-                execSync(`cd "${__dirname}/streamer" && npm run start`);
+                startServer();
             }
         });
+    }
+}
+
+const startServer = () => {
+    if (fs.existsSync(`${__dirname}/path.txt`)) {
+        fs.writeFileSync(`${__dirname}/streamer/path.txt`, fs.readFileSync(`${__dirname}/path.txt`, 'utf8'), 'utf8');
+        fs.unlinkSync(`${__dirname}/path.txt`);
+        console.log("Starting server...");
+        execSync(`cd "${__dirname}/streamer" && npm run start`);
+    } else {
+        console.log("Starting server, pick a video folder when prompted...");
+        execSync(`cd "${__dirname}/streamer" && npm run start`);
     }
 }
 
