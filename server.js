@@ -43,6 +43,9 @@ files.forEach(f => {
 });
 
 const getFolderPathToCastVideos = () => {
+    if(fs.existsSync(path.join(__dirname, 'path.txt'))) {
+        return fs.readFileSync(path.join(__dirname, 'path.txt'), 'utf8').replaceAll('\\', '/');
+    }
     // This single-line command prevents "MissingEndCurlyBrace" errors
     const cmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = 'Select Video Folder'; if($f.ShowDialog() -eq 'OK') { $f.SelectedPath }"`;
 
