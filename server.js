@@ -219,6 +219,9 @@ app.get("/subtitles", (req, res) => {
     let filePath = decodeURIComponent(req.query.id);
     filePath = filePath.substring(filePath.indexOf('streams/') + 8);
     filePath = filePath.substring(0, filePath.lastIndexOf('/'));
+    if(!fs.existsSync(path.join(__dirname, 'subtitles'))) {
+        return res.status(404).send("File not found");
+    }
     const files = fs.readdirSync(path.join(__dirname, 'subtitles'));
     for (let i = 0; i < files.length; i++) {
         if (files[i].substring(0, files[i].lastIndexOf('.')) === (filePath)) {
