@@ -1,4 +1,4 @@
-const { exec, execSync } = require('child_process');
+const { exec } = require('child_process');
 const fs = require('fs');
 
 const prepareFailureMessage = (message) => {
@@ -67,10 +67,10 @@ const startServer = () => {
         fs.writeFileSync(`${__dirname}/streamer/path.txt`, fs.readFileSync(`${__dirname}/path.txt`, 'utf8'), 'utf8');
         fs.unlinkSync(`${__dirname}/path.txt`);
         console.log("Starting server...");
-        execSync(`cd "${__dirname}/streamer" && npm run start`);
+        exec(`cd "${__dirname}/streamer" && npm run start`);
     } else {
         console.log("Starting server, pick a video folder when prompted...");
-        execSync(`cd "${__dirname}/streamer" && npm run start`);
+        exec(`cd "${__dirname}/streamer" && npm run start`);
     }
 }
 
