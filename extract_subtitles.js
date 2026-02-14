@@ -1,7 +1,9 @@
 const ffmpeg = require('fluent-ffmpeg');
 const path = require('path');
 const fs = require('fs');
-ffmpeg.setFfmpegPath('ffmpeg');
+console.log(fs.existsSync(path.join(__dirname, '../ffmpeg')) ? `${__dirname}/../ffmpeg/bin/ffmpeg.exe` : 'ffmpeg');
+ffmpeg.setFfmpegPath(fs.existsSync(path.join(__dirname, '../ffmpeg')) ? `${__dirname}/../ffmpeg/bin/ffmpeg.exe` : 'ffmpeg');
+
 
 const subtitlesDir = path.join(__dirname, 'extracted_subtitles');
 let id = null;
@@ -14,7 +16,7 @@ if (!fs.existsSync(subtitlesDir)) {
 // Get all video files
 const videoFiles = [];
 const args = process.argv.slice(2);
-if(!fs.existsSync(path.join(__dirname, 'videos_index.json'))) return;
+if (!fs.existsSync(path.join(__dirname, 'videos_index.json'))) return;
 const allVideos = JSON.parse(fs.readFileSync(path.join(__dirname, 'videos_index.json'), 'utf-8'));
 if (args.length > 0) {
     args.forEach(arg => {
