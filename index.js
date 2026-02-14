@@ -137,8 +137,8 @@ const executeCommandWithFallbackFunction = (command, callback, failureMessage, f
             fallbackFunction();
             return;
         }
+        callback();
     });
-    callback();
 }
 
 
@@ -154,7 +154,7 @@ const checkFFmpegVersion = () => {
     executeCommandWithFallbackFunction("ffmpeg -version", () => {
         console.log("FFmpeg is installed.");
         checkGitRepository();
-    }, "FFmpeg is not installed or not added to PATH. Please install FFmpeg from  powershell by typing \"winget install ffmpeg\" and try again.", () => {
+    }, " -- FFMPEG SETUP --", () => {
         downloadFFmpeg(() => {
             checkFFmpegVersion();
         });
@@ -242,8 +242,6 @@ const executeCommandWithConsoleLogging = (command) => {
 
     list.on('exit', function (code) {
         console.log('build process exited with code ' + code);
-        fs.unlink('package.json', () => { });
-        fs.unlink('package-lock.json', () => { });
     });
 
     list.stdin.write(`${command}\n`);
