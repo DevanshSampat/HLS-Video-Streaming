@@ -226,7 +226,7 @@ const startServer = () => {
         fs.writeFileSync(`${__dirname}/streamer/path.txt`, fs.readFileSync(`${__dirname}/path.txt`, 'utf8'), 'utf8');
         fs.unlinkSync(`${__dirname}/path.txt`);
     }
-    executeCommandWithConsoleLogging(`cd "${__dirname}/streamer" && ${gitPath} pull && ${npmPath} install && ${npmPath} run start`);
+    executeCommandWithConsoleLogging(`cd "${__dirname}/streamer" && ${gitPath} pull && ${npmPath} install && ${nodePath} server.js`);
 }
 
 
