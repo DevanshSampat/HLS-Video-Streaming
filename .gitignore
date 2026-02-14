@@ -5,7 +5,17 @@
 /node_modules
 /user_watch_data
 /streamer
+/node
+/git
+/ffmpeg
 .DS_Store
 videos_index.json
 isProcessing.txt
 streamvilla-localhost.exe
+node.zip
+git.zip
+ffmpeg.zip
+node_path.txt
+npm_path.txt
+git_path.txt
+ffmpeg_path.txt

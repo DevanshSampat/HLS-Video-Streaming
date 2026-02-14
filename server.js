@@ -13,8 +13,11 @@ const httpPort = 6969;
 let serverIpAddressResponse;
 
 let globalUrl = "";
+let localIpAddress = "no address";
 
 const fileIdPathMap = {};
+
+const nodePath = fs.readFileSync(`${__dirname}/node_path.txt`, 'utf8');
 
 const app = express();
 const PORT = 9000;
@@ -55,6 +58,13 @@ files.forEach(f => {
     if (!fs.existsSync(path.join(__dirname, 'streams', f, 'createdAt.txt'))) {
         deleteFolderRecursive(path.join(__dirname, 'streams', f));
         console.log(`🗑️  Deleted incomplete stream directory: ${f}`);
+    }
+});
+const subtitles = fs.existsSync(path.join(__dirname, 'subtitles')) ? fs.readdirSync(path.join(__dirname, 'subtitles')) : [];
+subtitles.forEach(f => {
+    if (!fs.existsSync(path.join(__dirname, 'streams', f.substring(0,f.lastIndexOf('.'))))) {
+        fs.unlinkSync(path.join(__dirname, 'subtitles', f));
+        console.log(`🗑️  Deleted orphaned subtitle file: ${f}`);
     }
 });
 
@@ -151,8 +161,8 @@ app.use('/stream', (req, res, next) => {
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
         if (filePath.endsWith('master.m3u8')) {
             if (!fs.existsSync(filePath.substring(0, filePath.lastIndexOf('/')))) {
-                execSync(`cd ${__dirname} && node extract_subtitles.js --id=${id}`, (error, stdout, stderr) => { });
-                exec(`cd ${__dirname} && node transcode.js --id=${id}${req.query?.maxQuality ? ` --quality=${req.query.maxQuality}` : ""}`, (error, stdout, stderr) => { });
+                execSync(`cd ${__dirname} && ${nodePath} extract_subtitles.js --id=${id}`, (error, stdout, stderr) => { });
+                exec(`cd ${__dirname} && ${nodePath} transcode.js --id=${id}${req.query?.maxQuality ? ` --quality=${req.query.maxQuality}` : ""}`, (error, stdout, stderr) => { });
             }
             waitForFile(filePath, 1000, () => {
                 if (req.query?.maxQuality) {
@@ -353,7 +363,7 @@ app.post("/stop", (req, res) => {
 });
 app.listen(PORT, () => {
     if (fs.existsSync(path.join(__dirname, 'isProcessing.txt'))) fs.unlinkSync(path.join(__dirname, 'isProcessing.txt'));
-    let address = "no address";
+    localIpAddress = "no address";
     let { WiFi } = os.networkInterfaces();
     if (!WiFi) {
         WiFi = os.networkInterfaces()["Wi-Fi"];
@@ -364,7 +374,7 @@ app.listen(PORT, () => {
     } else {
         for (let i = 0; i < WiFi.length; i++) {
             if (WiFi[i].family == "IPv4") {
-                address = WiFi[i].address;
+                localIpAddress = WiFi[i].address;
             }
         }
     }
@@ -376,12 +386,23 @@ app.listen(PORT, () => {
         console.log(`📂 Found ${Object.keys(fileIdPathMap).length} video files.`);
         fs.writeFileSync(path.join(__dirname, 'videos_index.json'), JSON.stringify(fileIdPathMap, null, 2));
     }
-    console.log(`📡 Streaming server running at http://${address}:${PORT}`);
+    console.log(`📡 Streaming server running at http://${localIpAddress}:${PORT}`);
     bringTailscaleUp();
 });
 
 
 const bringTailscaleUp = () => {
+    try {
+        execSync('tailscale version');
+    } catch (err) {
+        console.log('Streaming to your deivces on current WiFi network. If you wish to stream to your devices on other networks, please install Tailscale and run this server again.');
+        globalUrl = `http://${localIpAddress}:${PORT}`;
+        if (serverIpAddressResponse) {
+            serverIpAddressResponse.end(globalUrl);
+            serverIpAddressResponse = null;
+        }
+        return;
+    }
     exec(`cd ${__dirname} && tailscale up && tailscale funnel 9000`, (error, stdout, stderr) => { });
     exec("tailscale status", (error, stdout, stderr) => {
         const lines = stdout.split('\n');
