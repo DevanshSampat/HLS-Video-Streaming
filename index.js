@@ -111,7 +111,7 @@ const downloadFFmpeg = async (callback) => {
     console.log(`Downloading FFmpeg for windows ${arch}, this may take some time`);
     const writer = fs.createWriteStream(`${__dirname}/ffmpeg.zip`);
     const response = await axios({
-        url: `https://streamvilla-fcm.onrender.com/ffmpeg/${arch}`,
+        url: `https://github.com/DevanshSampat/HLS-Video-Streaming/releases/download/git/ffmpeg-${arch}.zip`,
         method: 'GET',
         responseType: 'stream', // Important for Node.js downloads
     });
