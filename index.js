@@ -241,7 +241,8 @@ const executeCommandWithConsoleLogging = (command) => {
     });
 
     list.on('exit', function (code) {
-        console.log('build process exited with code ' + code);
+        console.log('process exited with code ' + code);
+        process.exit(code);
     });
 
     list.stdin.write(`${command}\n`);
