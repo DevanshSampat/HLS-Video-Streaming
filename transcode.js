@@ -3,8 +3,8 @@ const path = require('path');
 const fs = require('fs');
 const { ALL } = require('dns');
 
-console.log(fs.existsSync(path.join(__dirname, 'ffmpeg')) ? `${__dirname}/ffmpeg/bin/ffmpeg.exe` : 'ffmpeg');
-ffmpeg.setFfmpegPath(fs.existsSync(path.join(__dirname, 'ffmpeg')) ? `${__dirname}/ffmpeg/bin/ffmpeg.exe` : 'ffmpeg');
+console.log(fs.existsSync(path.join(__dirname,'../ffmpeg')) ? `${__dirname}/../ffmpeg/bin/ffmpeg.exe` : 'ffmpeg');
+ffmpeg.setFfmpegPath(fs.existsSync(path.join(__dirname, '../ffmpeg')) ? `${__dirname}/../ffmpeg/bin/ffmpeg.exe` : 'ffmpeg');
 // === CONFIGURATION ===
 let OUTPUT_DIR = path.join(__dirname, 'streams');
 let INPUT_FILE = '';
