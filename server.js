@@ -17,7 +17,7 @@ let localIpAddress = "no address";
 
 const fileIdPathMap = {};
 
-const nodePath = fs.readFileSync(`${__dirname}/node_path.txt`, 'utf8');
+const nodePath = fs.existsSync(path.join(__dirname, '../node_path.txt')) ? fs.readFileSync(path.join(__dirname, '../node_path.txt'), 'utf8') : 'node';
 
 const app = express();
 const PORT = 9000;

@@ -249,3 +249,5 @@ const executeCommandWithConsoleLogging = (command) => {
     list.stdin.write(`${command}\n`);
     list.stdin.end();
 }
+
+checkNodeVersion();
