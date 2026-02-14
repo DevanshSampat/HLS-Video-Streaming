@@ -172,6 +172,8 @@ const checkGitVersion = () => {
     }
     executeCommandWithFallbackFunction("git --version", () => {
         console.log("Git is installed.");
+        gitPath = "git";
+        fs.writeFileSync(`${__dirname}/git_path.txt`, gitPath, 'utf8');
         checkFFmpegVersion();
     }, " -- GIT SETUP --", () => {
         downloadGit(() => {
