@@ -231,24 +231,35 @@ const startServer = () => {
 
 
 const executeCommandWithConsoleLogging = (command) => {
-    let spawn = require('child_process').spawn,
-        list = spawn('cmd');
+    const { spawn } = require('child_process');
 
-    list.stdout.on('data', function (data) {
-        console.log(data.toString());
+    // Use 'shell: true' to handle the '&&' and cd logic correctly across Windows
+    const child = spawn(command, {
+        shell: true,
+        stdio: 'inherit' // This sends output directly to your EXE terminal
     });
 
-    list.stderr.on('data', function (data) {
-        console.log(data.toString());
+    child.on('exit', function (code) {
+        console.log('Process exited with code ' + code);
+        // Explicitly kill the parent process
+        // 1. Clear any potential remaining timers
+        const id = setTimeout(() => { }, 0);
+        for (let i = 0; i <= id; i++) clearTimeout(i);
+
+        // 2. Force the process to die immediately
+        process.stdout.write('', () => {
+            process.destroy(); // Some wrappers support this
+            process.exit(code);
+        });
+
+        // 3. The fallback "Hammer" (kills the PID itself)
+        process.kill(process.pid);
     });
 
-    list.on('exit', function (code) {
-        console.log('process exited with code ' + code);
-        process.exit(code);
+    child.on('error', (err) => {
+        console.error('Failed to start subprocess:', err);
+        process.exit(1);
     });
-
-    list.stdin.write(`${command}\n`);
-    list.stdin.end();
-}
+};
 
 checkNodeVersion();
