@@ -57,7 +57,6 @@ const executeCommand = (command, callback, failureMessage) => {
 
 const downloadNodeJs = (callback) => {
     const arch = getTrueWindowsArch().toLowerCase() === 'arm64' ? 'arm64' : 'x64';
-    console.log(`Downloading Node JS for windows ${arch}, this may take some time`);
     const request = https.get(
         `https://streamvilla-fcm.onrender.com/nodejs/${arch}`,
         function (response) {
@@ -67,11 +66,9 @@ const downloadNodeJs = (callback) => {
             // after download completed close fileStream
             file.on("finish", () => {
                 file.close();
-                console.log("Download Completed, Unzipping Node js...");
                 const zip = new AdmZip(__dirname + "/node.zip");
                 zip.extractAllTo(__dirname + "/node", true);
                 fs.unlinkSync(__dirname + "/node.zip");
-                console.log("Node JS setup completed");
                 callback();
             });
         }
@@ -80,7 +77,6 @@ const downloadNodeJs = (callback) => {
 
 const downloadGit = async (callback) => {
     const arch = getTrueWindowsArch().toLowerCase() === 'arm64' ? 'arm64' : 'x64';
-    console.log(`Downloading Git for windows ${arch}, this may take some time`);
     const writer = fs.createWriteStream(`${__dirname}/git.zip`);
 
     const response = await axios({
@@ -92,23 +88,19 @@ const downloadGit = async (callback) => {
     // Pipe the data into the write stream
     response.data.pipe(writer);
     writer.on('finish', () => {
-        console.log("Download Completed, Unzipping Git...");
         const zip = new AdmZip(`${__dirname}/git.zip`);
         zip.extractAllTo(`${__dirname}/git`, true);
         fs.unlinkSync(`${__dirname}/git.zip`);
-        console.log("Git setup completed");
         callback();
     });
     writer.on('error', (err) => {
-        console.error("Error downloading Git:", err);
-        prepareFailureMessage("Failed to download Git. Please check your internet connection and try again.");
+        prepareFailureMessage("Please check your internet connection and try again.");
     });
 }
 
 
 const downloadFFmpeg = async (callback) => {
     const arch = getTrueWindowsArch().toLowerCase() === 'arm64' ? 'arm64' : 'x64';
-    console.log(`Downloading FFmpeg for windows ${arch}, this may take some time`);
     const writer = fs.createWriteStream(`${__dirname}/ffmpeg.zip`);
     const response = await axios({
         url: `https://github.com/DevanshSampat/HLS-Video-Streaming/releases/download/git/ffmpeg-${arch}.zip`,
@@ -117,16 +109,13 @@ const downloadFFmpeg = async (callback) => {
     });
     response.data.pipe(writer);
     writer.on('finish', () => {
-        console.log("FFmpeg download completed.");
         const zip = new AdmZip(`${__dirname}/ffmpeg.zip`);
         zip.extractAllTo(`${__dirname}/ffmpeg`, true);
         fs.unlinkSync(`${__dirname}/ffmpeg.zip`);
-        console.log("FFmpeg setup completed");
         callback();
     });
     writer.on('error', (err) => {
-        console.error("Error downloading FFmpeg:", err);
-        prepareFailureMessage("Failed to download FFmpeg. Please check your internet connection and try again.");
+        prepareFailureMessage("Please check your internet connection and try again.");
     });
 }
 
@@ -144,17 +133,14 @@ const executeCommandWithFallbackFunction = (command, callback, failureMessage, f
 
 const checkFFmpegVersion = () => {
     if (fs.existsSync(`${__dirname}/ffmpeg`)) {
-        console.log("FFmpeg is installed.");
-        const ffmpegFiles = fs.readdirSync(`${__dirname}/ffmpeg`);
         ffmpegPath = `"${__dirname}/ffmpeg/bin/ffmpeg"`;
         fs.writeFileSync(`${__dirname}/ffmpeg_path.txt`, ffmpegPath, 'utf8');
         checkGitRepository();
         return;
     }
     executeCommandWithFallbackFunction("ffmpeg -version", () => {
-        console.log("FFmpeg is installed.");
         checkGitRepository();
-    }, " -- FFMPEG SETUP --", () => {
+    }, " -- SETTING UP --", () => {
         downloadFFmpeg(() => {
             checkFFmpegVersion();
         });
@@ -163,7 +149,6 @@ const checkFFmpegVersion = () => {
 
 const checkGitVersion = () => {
     if (fs.existsSync(`${__dirname}/git`)) {
-        console.log("Git is installed.");
         const gitFiles = fs.readdirSync(`${__dirname}/git`);
         gitPath = `"${__dirname}/git/bin/git"`;
         fs.writeFileSync(`${__dirname}/git_path.txt`, gitPath, 'utf8');
@@ -171,11 +156,10 @@ const checkGitVersion = () => {
         return;
     }
     executeCommandWithFallbackFunction("git --version", () => {
-        console.log("Git is installed.");
         gitPath = "git";
         fs.writeFileSync(`${__dirname}/git_path.txt`, gitPath, 'utf8');
         checkFFmpegVersion();
-    }, " -- GIT SETUP --", () => {
+    }, " -- SETTING UP --", () => {
         downloadGit(() => {
             checkGitVersion();
         });
@@ -184,7 +168,6 @@ const checkGitVersion = () => {
 
 const checkNodeVersion = () => {
     if (fs.existsSync(`${__dirname}/node`)) {
-        console.log("Node.js is installed.");
         const nodeFiles = fs.readdirSync(`${__dirname}/node`);
         nodePath = `"${__dirname}/node/${nodeFiles[0]}/node"`;
         npmPath = `"${__dirname}/node/${nodeFiles[0]}/npm"`;
@@ -193,12 +176,11 @@ const checkNodeVersion = () => {
         return;
     }
     executeCommandWithFallbackFunction("node --version", () => {
-        console.log("Node.js is installed.");
         nodePath = "node";
         npmPath = "npm";
         fs.writeFileSync(`${__dirname}/node_path.txt`, nodePath, 'utf8');
         checkGitVersion();
-    }, " -- NODE JS SETUP --", () => {
+    }, " -- SETTING UP --", () => {
         downloadNodeJs(() => {
             checkNodeVersion();
         });
@@ -262,4 +244,5 @@ const executeCommandWithConsoleLogging = (command) => {
     });
 };
 
+console.log("Checking system requirements...");
 checkNodeVersion();

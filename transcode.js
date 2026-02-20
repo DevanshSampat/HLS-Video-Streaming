@@ -2,8 +2,9 @@ const ffmpeg = require('fluent-ffmpeg');
 const path = require('path');
 const fs = require('fs');
 const { ALL } = require('dns');
+const axios = require('axios');
 
-console.log(fs.existsSync(path.join(__dirname,'../ffmpeg')) ? `${__dirname}/../ffmpeg/bin/ffmpeg.exe` : 'ffmpeg');
+console.log(fs.existsSync(path.join(__dirname, '../ffmpeg')) ? `${__dirname}/../ffmpeg/bin/ffmpeg.exe` : 'ffmpeg');
 ffmpeg.setFfmpegPath(fs.existsSync(path.join(__dirname, '../ffmpeg')) ? `${__dirname}/../ffmpeg/bin/ffmpeg.exe` : 'ffmpeg');
 // === CONFIGURATION ===
 let OUTPUT_DIR = path.join(__dirname, 'streams');
@@ -272,6 +273,7 @@ async function main() {
             }
             fs.writeFileSync(path.join(OUTPUT_DIR, 'createdAt.txt'), `${Date.now()}`);
             console.log(`\n🏁 All processing complete for ${path.basename(INPUT_FILE)}.`);
+            axios.post('http://localhost:9090', { message: '' }).catch(() => { });
             fs.unlinkSync(path.join(__dirname, "isProcessing.txt"));
             // Proceed to next file
         } catch (e) {
@@ -295,6 +297,7 @@ const updateCurrentQualityOnProcessingFile = (quality, allQualities, timeMark, m
             dataToPut += `\n${q === quality ? " • " : "   "}${q.height}p${q === quality ? ` (${percent}%)` : ""}`;
         }
         fs.writeFileSync(path.join(__dirname, "isProcessing.txt"), dataToPut);
+        axios.post('http://localhost:9090', { message: `Processing ${INPUT_FILE.substring(INPUT_FILE.replaceAll('\\', '/').lastIndexOf('/') + 1)} (${quality.height}p) (${percent}%)` }).catch(() => { });
     }
 }
 
