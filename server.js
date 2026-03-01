@@ -166,6 +166,7 @@ app.use('/stream', (req, res, next) => {
             }
             waitForFile(filePath, 1000, () => {
                 if (req.query?.maxQuality) {
+                    console.log(`Filtering manifest for max quality: ${req.query.maxQuality}p`);
                     res.send(filterManifest(fs.readFileSync(filePath, 'utf8'), req.query.maxQuality));
                 } else {
                     res.download(filePath);

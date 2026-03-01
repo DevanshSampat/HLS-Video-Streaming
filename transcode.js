@@ -12,6 +12,8 @@ let INPUT_FILE = '';
 let id = null;
 let lastFileUpdateTime = 0;
 
+const processingProgress = {};
+
 if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 }
@@ -97,7 +99,6 @@ function processTrack(input, mapIndex, output, isVideo, opts = {}, metadata, qua
         // Log start but don't spam progress for every single track to keep terminal clean
         console.log(`\n▶️  Starting: ${path.basename(output)}`);
         if (isVideo) cmd.on('progress', (p) => {
-            process.stdout.write(`⏳ Processing: ${p.timemark} \r`)
             updateCurrentQualityOnProcessingFile(quality, validQualities, p.timemark, metadata);
         });
 
@@ -107,7 +108,11 @@ function processTrack(input, mapIndex, output, isVideo, opts = {}, metadata, qua
         })
             .on('end', () => {
                 const duration = ((Date.now() - startTime) / 1000 / 60).toFixed(2);
+                if(isVideo) processingProgress[quality.height] = 100;
                 console.log(`\n✅ Completed: ${path.basename(output)} (${duration} min)`);
+                if(isVideo && output.includes('temp_')) {
+                    fs.renameSync(output, output.replace('temp_', ''));
+                }
                 resolve();
             });
 
@@ -260,26 +265,30 @@ async function main() {
                 // 1. Add to active list immediately
                 activeQualities.push(q);
                 // 2. Start transcoding this quality. Player will poll and wait for segments.
-                await processTrack(INPUT_FILE, vStream.index, path.join(OUTPUT_DIR, `video_${isFirst ? "" : "temp_"}${q.height}p.m3u8`), true, {
+                processTrack(INPUT_FILE, vStream.index, path.join(OUTPUT_DIR, `video_${isFirst ? "" : "temp_"}${q.height}p.m3u8`), true, {
                     height: q.height, bitrate: q.bitrate, segPath: path.join(OUTPUT_DIR, `video_${q.height}p_%03d.ts`)
                 }, metadata, q, validQualities);
-                if (!isFirst) {
-                    // 3. Rename temp file to official after processing
-                    fs.renameSync(
-                        path.join(OUTPUT_DIR, `video_temp_${q.height}p.m3u8`),
-                        path.join(OUTPUT_DIR, `video_${q.height}p.m3u8`)
-                    );
-                }
             }
-            fs.writeFileSync(path.join(OUTPUT_DIR, 'createdAt.txt'), `${Date.now()}`);
-            console.log(`\n🏁 All processing complete for ${path.basename(INPUT_FILE)}.`);
-            axios.post('http://localhost:9090', { message: '' }).catch(() => { });
-            fs.unlinkSync(path.join(__dirname, "isProcessing.txt"));
-            // Proceed to next file
+            waitForAllQualitiesToFinish(validQualities, () => {
+                fs.writeFileSync(path.join(OUTPUT_DIR, 'createdAt.txt'), `${Date.now()}`);
+                console.log(`\n🏁 All processing complete for ${path.basename(INPUT_FILE)}.`);
+                axios.post('http://localhost:9090', { message: '' }).catch(() => { });
+                fs.unlinkSync(path.join(__dirname, "isProcessing.txt"));
+            });
         } catch (e) {
-            console.error("\n💥 Process stopped.");
+            console.error("\n💥 Process stopped.",e);
         }
     });
+}
+
+const waitForAllQualitiesToFinish = (qualities, callback) => {
+    for(const q of qualities) {
+        if (!processingProgress[q.height] || processingProgress[q.height] < 100) {
+            setTimeout(() => waitForAllQualitiesToFinish(qualities, callback), 10000); // Check every 10 seconds
+            return;
+        }
+    }
+    callback();
 }
 
 const updateCurrentQualityOnProcessingFile = (quality, allQualities, timeMark, metadata) => {
@@ -290,14 +299,19 @@ const updateCurrentQualityOnProcessingFile = (quality, allQualities, timeMark, m
         const seconds = timeParts[0] * 3600 + timeParts[1] * 60 + timeParts[2];
         percent = metadata.format.duration ? ((seconds / Math.ceil(metadata.format.duration)) * 100).toFixed(2) : "0.00";
     }
+    processingProgress[quality.height] = percent;
     if (lastFileUpdateTime < Date.now() - 2000) { // Limit updates to every 2 seconds
         lastFileUpdateTime = Date.now();
         let dataToPut = id;
         for (const q of allQualities) {
-            dataToPut += `\n${q === quality ? " • " : "   "}${q.height}p${q === quality ? ` (${percent}%)` : ""}`;
+            dataToPut += `\n${q === quality ? " • " : "   "}${q.height}p (${processingProgress[q.height]}%)`;
         }
         fs.writeFileSync(path.join(__dirname, "isProcessing.txt"), dataToPut);
-        axios.post('http://localhost:9090', { message: `Processing ${INPUT_FILE.substring(INPUT_FILE.replaceAll('\\', '/').lastIndexOf('/') + 1)} (${quality.height}p) (${percent}%)` }).catch(() => { });
+        let message = `Processing ${INPUT_FILE.substring(INPUT_FILE.replaceAll('\\', '/').lastIndexOf('/') + 1)}`
+        for(const q of allQualities) {
+            message += `\n${q.height}p: ${processingProgress[q.height]}%`;
+        }
+        axios.post('http://localhost:9090', { message }).catch(() => { });
     }
 }
 
