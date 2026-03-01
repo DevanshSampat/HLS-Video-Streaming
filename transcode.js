@@ -11,6 +11,7 @@ let OUTPUT_DIR = path.join(__dirname, 'streams');
 let INPUT_FILE = '';
 let id = null;
 let lastFileUpdateTime = 0;
+let videoFileSize = 0;
 
 const processingProgress = {};
 
@@ -74,6 +75,16 @@ const COMMON_OPTIONS = [
     '-max_muxing_queue_size', '1024'
 ];
 
+const processTrackSmartly = (input, mapIndex, output, isVideo, opts = {}, metadata, quality, validQualities) => {
+    if (isVideo) {
+        waitForCurrentQualitiesToFinish(quality, validQualities, () => {
+            processTrack(input, mapIndex, output, isVideo, opts, metadata, quality, validQualities);
+        })
+    } else {
+        processTrack(input, mapIndex, output, isVideo, opts, metadata, quality, validQualities);
+    }
+}
+
 // === HELPER: Transcode Single Track ===
 function processTrack(input, mapIndex, output, isVideo, opts = {}, metadata, quality, validQualities) {
     return new Promise((resolve, reject) => {
@@ -108,9 +119,9 @@ function processTrack(input, mapIndex, output, isVideo, opts = {}, metadata, qua
         })
             .on('end', () => {
                 const duration = ((Date.now() - startTime) / 1000 / 60).toFixed(2);
-                if(isVideo) processingProgress[quality.height] = 100;
+                if (isVideo) processingProgress[quality.height] = 100;
                 console.log(`\n✅ Completed: ${path.basename(output)} (${duration} min)`);
-                if(isVideo && output.includes('temp_')) {
+                if (isVideo && output.includes('temp_')) {
                     fs.renameSync(output, output.replace('temp_', ''));
                 }
                 resolve();
@@ -160,6 +171,7 @@ async function main() {
             }
         }
     });
+    videoFileSize = fs.existsSync(INPUT_FILE) ? fs.statSync(INPUT_FILE).size : 0;
     if (id === null) return;
     const allStreams = fs.readdirSync(path.join(__dirname, 'streams')).sort((a, b) => {
         const aTime = fs.existsSync(path.join(__dirname, 'streams', a, 'createdAt.txt')) ? Number(fs.readFileSync(path.join(__dirname, 'streams', a, 'createdAt.txt'), 'utf-8')) : Number.MAX_SAFE_INTEGER;
@@ -192,6 +204,7 @@ async function main() {
         if (!vStream || aStreams.length === 0) return console.error("❌ Missing streams");
 
         const validQualities = ALL_VIDEO_QUALITIES.filter(q => q.height <= vStream.height);
+        validQualities.forEach(q => processingProgress[q.height] = 0); // Initialize progress tracking
         if (validQualities.length === 0 || validQualities[validQualities.length - 1].height !== vStream.height) {
             validQualities.push({ height: vStream.height, bitrate: '2000k' });
         }
@@ -245,7 +258,7 @@ async function main() {
             // PHASE 1: Audio First (Required for master playlist to work correctly)
             console.log(`\n🎵 PHASE 1: Processing ${audioTracks.length} Audio Tracks...`);
             for (const t of audioTracks) {
-                processTrack(INPUT_FILE, t.index, path.join(OUTPUT_DIR, `${t.id}.m3u8`), false, {
+                processTrackSmartly(INPUT_FILE, t.index, path.join(OUTPUT_DIR, `${t.id}.m3u8`), false, {
                     segPath: path.join(OUTPUT_DIR, `${t.id}_%03d.ts`)
                 });
             }
@@ -258,6 +271,7 @@ async function main() {
                 console.log(q);
             }
 
+            let delay = 1000; // Start with 1 second delay
             for (const q of validQualities) {
                 console.log(`\n🔹 Starting processing for ${q.height}p...`);
                 updateCurrentQualityOnProcessingFile(q, validQualities, "00:00:00", metadata);
@@ -265,9 +279,12 @@ async function main() {
                 // 1. Add to active list immediately
                 activeQualities.push(q);
                 // 2. Start transcoding this quality. Player will poll and wait for segments.
-                processTrack(INPUT_FILE, vStream.index, path.join(OUTPUT_DIR, `video_${isFirst ? "" : "temp_"}${q.height}p.m3u8`), true, {
-                    height: q.height, bitrate: q.bitrate, segPath: path.join(OUTPUT_DIR, `video_${q.height}p_%03d.ts`)
-                }, metadata, q, validQualities);
+                setTimeout(() => {
+                    processTrackSmartly(INPUT_FILE, vStream.index, path.join(OUTPUT_DIR, `video_${isFirst ? "" : "temp_"}${q.height}p.m3u8`), true, {
+                        height: q.height, bitrate: q.bitrate, segPath: path.join(OUTPUT_DIR, `video_${q.height}p_%03d.ts`)
+                    }, metadata, q, validQualities);
+                }, delay);
+                delay += 5000; // Add 1 second delay before starting next quality to stagger them
             }
             waitForAllQualitiesToFinish(validQualities, () => {
                 fs.writeFileSync(path.join(OUTPUT_DIR, 'createdAt.txt'), `${Date.now()}`);
@@ -276,17 +293,37 @@ async function main() {
                 fs.unlinkSync(path.join(__dirname, "isProcessing.txt"));
             });
         } catch (e) {
-            console.error("\n💥 Process stopped.",e);
+            console.error("\n💥 Process stopped.", e);
         }
     });
 }
 
 const waitForAllQualitiesToFinish = (qualities, callback) => {
-    for(const q of qualities) {
+    for (const q of qualities) {
         if (!processingProgress[q.height] || processingProgress[q.height] < 100) {
             setTimeout(() => waitForAllQualitiesToFinish(qualities, callback), 10000); // Check every 10 seconds
             return;
         }
+    }
+    callback();
+}
+
+const waitForCurrentQualitiesToFinish = (currentSelectedQuality, qualities, callback) => {
+    const maxQuality = qualities.reduce((max, q) => q.height > max.height ? q : max, qualities[0]);
+    const approximateProcessedQualitySize = videoFileSize * (currentSelectedQuality.height / maxQuality.height);
+    let currentlyProcessingSize = 0;
+    for (const q of qualities) {
+        if (processingProgress[q.height] && processingProgress[q.height] > 0 && processingProgress[q.height] < 100) {
+            currentlyProcessingSize += (videoFileSize * (q.height / maxQuality.height));
+        }
+    }
+    if (currentlyProcessingSize === 0) {
+        callback();
+        return;
+    }
+    if (currentlyProcessingSize + approximateProcessedQualitySize > videoFileSize) {
+        setTimeout(() => waitForCurrentQualitiesToFinish(currentSelectedQuality, qualities, callback), 5000); // Check every 5 seconds
+        return;
     }
     callback();
 }
@@ -304,11 +341,11 @@ const updateCurrentQualityOnProcessingFile = (quality, allQualities, timeMark, m
         lastFileUpdateTime = Date.now();
         let dataToPut = id;
         for (const q of allQualities) {
-            dataToPut += `\n${q === quality ? " • " : "   "}${q.height}p (${processingProgress[q.height]}%)`;
+            dataToPut += `\n${q.height}p (${processingProgress[q.height]}%)`;
         }
         fs.writeFileSync(path.join(__dirname, "isProcessing.txt"), dataToPut);
         let message = `Processing ${INPUT_FILE.substring(INPUT_FILE.replaceAll('\\', '/').lastIndexOf('/') + 1)}`
-        for(const q of allQualities) {
+        for (const q of allQualities) {
             message += `\n${q.height}p: ${processingProgress[q.height]}%`;
         }
         axios.post('http://localhost:9090', { message }).catch(() => { });
