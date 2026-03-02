@@ -185,7 +185,6 @@ const waitForFile = (filePath, timeout, callback) => {
 
 // Serve the HLS video files
 app.use('/stream', (req, res) => {
-    console.log(req.path);
     if (req.path.endsWith('.m3u8') || req.path.endsWith('.ts')) {
         const filePath = path.join(__dirname, decodeURIComponent(req.path)).replaceAll('\\', '/');
         if (fs.existsSync(filePath)) res.sendFile(filePath);
