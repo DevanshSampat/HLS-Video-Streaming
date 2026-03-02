@@ -227,16 +227,7 @@ async function main() {
                 }
             }
         });
-        if (!isQualitySpecified) {
-            for (let i = validQualities.length - 1; i >= 0; i--) {
-                const quality = ALL_VIDEO_QUALITIES.find(q => q.height === validQualities[i].height);
-                if (quality && quality.height <= 1080) {
-                    prioritizedQualityIndex = i;
-                    break;
-                }
-            }
-        }
-
+        
         // Move prioritized quality to the front
         if (prioritizedQualityIndex > 0) {
             const [pq] = validQualities.splice(prioritizedQualityIndex, 1);

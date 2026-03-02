@@ -62,7 +62,7 @@ files.forEach(f => {
 });
 const subtitles = fs.existsSync(path.join(__dirname, 'subtitles')) ? fs.readdirSync(path.join(__dirname, 'subtitles')) : [];
 subtitles.forEach(f => {
-    if (!fs.existsSync(path.join(__dirname, 'streams', f.substring(0,f.lastIndexOf('.'))))) {
+    if (!fs.existsSync(path.join(__dirname, 'streams', f.substring(0, f.lastIndexOf('.'))))) {
         fs.unlinkSync(path.join(__dirname, 'subtitles', f));
         console.log(`🗑️  Deleted orphaned subtitle file: ${f}`);
     }
@@ -153,29 +153,30 @@ function filterManifest(originalM3u8, maxQuality) {
 
 // Middleware to set correct headers for HLS files
 app.use('/stream', (req, res, next) => {
-    const filePath = path.join(__dirname, decodeURIComponent(req.path)).replaceAll('\\', '/');
-    let id = filePath;
-    id = id.substring(id.lastIndexOf('streams/') + 8);
-    id = id.substring(0, id.lastIndexOf('/'));
-    if (filePath.endsWith('.m3u8')) {
-        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-        if (filePath.endsWith('master.m3u8')) {
-            if (!fs.existsSync(filePath.substring(0, filePath.lastIndexOf('/')))) {
-                execSync(`cd ${__dirname} && ${nodePath} extract_subtitles.js --id=${id}`, (error, stdout, stderr) => { });
-                exec(`cd ${__dirname} && ${nodePath} transcode.js --id=${id}${req.query?.maxQuality ? ` --quality=${req.query.maxQuality}` : ""}`, (error, stdout, stderr) => { });
-            }
-            waitForFile(filePath, 1000, () => {
-                if (req.query?.maxQuality) {
-                    console.log(`Filtering manifest for max quality: ${req.query.maxQuality}p`);
-                    res.send(filterManifest(fs.readFileSync(filePath, 'utf8'), req.query.maxQuality));
-                } else {
-                    res.download(filePath);
+    if (req.path.endsWith('.m3u8') || req.path.endsWith('.ts')) {
+        const filePath = path.join(__dirname, decodeURIComponent(req.path)).replaceAll('\\', '/');
+        let id = filePath;
+        id = id.substring(id.lastIndexOf('streams/') + 8);
+        id = id.substring(0, id.lastIndexOf('/'));
+        if (filePath.endsWith('.m3u8')) {
+            res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+            if (filePath.endsWith('master.m3u8')) {
+                if (!fs.existsSync(filePath.substring(0, filePath.lastIndexOf('/')))) {
+                    exec(`cd ${__dirname} && ${nodePath} transcode.js --id=${id}${req.query?.maxQuality ? ` --quality=${req.query.maxQuality}` : ""}`, (error, stdout, stderr) => { });
                 }
-            });
-            return;
+                waitForFile(filePath, 1000, () => {
+                    if (req.query?.maxQuality) {
+                        console.log(`Filtering manifest for max quality: ${req.query.maxQuality}p`);
+                        res.send(filterManifest(fs.readFileSync(filePath, 'utf8'), req.query.maxQuality));
+                    } else {
+                        res.download(filePath);
+                    }
+                });
+                return;
+            }
+        } else if (filePath.endsWith('.ts')) {
+            res.setHeader('Content-Type', 'video/mp2t');
         }
-    } else if (filePath.endsWith('.ts')) {
-        res.setHeader('Content-Type', 'video/mp2t');
     }
     next();
 });
@@ -191,9 +192,51 @@ const waitForFile = (filePath, timeout, callback) => {
 
 // Serve the HLS video files
 app.use('/stream', (req, res) => {
-    const filePath = path.join(__dirname, decodeURIComponent(req.path)).replaceAll('\\', '/');
-    if (fs.existsSync(filePath)) res.sendFile(filePath);
-    else res.status(404).send("File not found");
+    if (req.path.endsWith('.m3u8') || req.path.endsWith('.ts')) {
+        const filePath = path.join(__dirname, decodeURIComponent(req.path)).replaceAll('\\', '/');
+        if (fs.existsSync(filePath)) res.sendFile(filePath);
+        else res.status(404).send("File not found");
+    } else {
+        const videoPath = JSON.parse(fs.readFileSync(path.join(__dirname, 'videos_index.json'), 'utf8'))[req.path.replaceAll('\\', '').replaceAll('/', '')];
+        if (!videoPath) {
+            console.error("Requested file not found in index:", req.path);
+            res.status(404).send("File not found");
+            return;
+        }
+        const videoSize = fs.statSync(videoPath).size;
+        const { range } = req.headers;
+        let actualSize = videoSize / 1024 / 1024;
+        // console.log(`video size = ${actualSize} MB`)
+        const start =
+            range == undefined
+                ? 0
+                : Number(range.substring("bytes=".length, range.indexOf("-")));
+        let end = videoSize - 1;
+        if (
+            range != undefined &&
+            range.includes("-") &&
+            range.length > range.indexOf("-") + 1
+        ) {
+            end = Number(range.substring(range.indexOf("-") + 1));
+        }
+        actualSize = end / 1024 / 1024;
+        const contentLength = end - start + 1;
+        const headers = {
+            "Content-Range": `bytes=${start}-${end}/${videoSize}`,
+            "Accept-Ranges": "bytes",
+            "Content-Length": contentLength,
+            "Content-Type": `video/${videoPath.substring(
+                videoPath.lastIndexOf(".") + 1
+            )}`,
+        };
+        res.writeHead(206, headers);
+        const stream = fs.createReadStream(videoPath, {
+            start,
+            end,
+        });
+        stream.pipe(res);
+
+    }
 });
 
 app.get('/', async (req, res) => {
@@ -201,6 +244,17 @@ app.get('/', async (req, res) => {
 });
 
 app.get("/videos", (req, res) => {
+    let ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+    let isDirectConnection = false;
+    try {
+        const tailscaleStatus = execSync('tailscale status', { encoding: 'utf8' });
+        const lines = tailscaleStatus.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].startsWith(ip) && lines[i].toLowerCase().includes(" direct")) {
+                isDirectConnection = true;
+            }
+        }
+    } catch (err) { }
     res.statusCode = 200;
     res.contentType = "application/json";
     const response = [];
@@ -209,7 +263,7 @@ app.get("/videos", (req, res) => {
         const fileName = path.basename(filePath);
         response.push({
             name: fileName,
-            path: `streams/${key}/master.m3u8`,
+            path: isDirectConnection ? key : `streams/${key}/master.m3u8`,
             subtitle: true,
         });
     }
@@ -228,18 +282,22 @@ app.get(`/download`, (req, res) => {
 
 app.get("/subtitles", (req, res) => {
     let filePath = decodeURIComponent(req.query.id);
-    filePath = filePath.substring(filePath.indexOf('streams/') + 8);
-    filePath = filePath.substring(0, filePath.lastIndexOf('/'));
-    if(!fs.existsSync(path.join(__dirname, 'subtitles'))) {
-        return res.status(404).send("File not found");
-    }
-    const files = fs.readdirSync(path.join(__dirname, 'subtitles'));
-    for (let i = 0; i < files.length; i++) {
-        if (files[i].substring(0, files[i].lastIndexOf('.')) === (filePath)) {
-            return res.download(path.join(__dirname, 'subtitles', files[i]));
+    if (filePath.includes('streams/')) filePath = filePath.substring(filePath.indexOf('streams/') + 8);
+    if (filePath.includes('/')) filePath = filePath.substring(0, filePath.lastIndexOf('/'));
+    exec(`cd ${__dirname} && ${nodePath} extract_subtitles.js --id=${filePath}`, (error, stdout, stderr) => {
+        if (!fs.existsSync(path.join(__dirname, 'subtitles'))) {
+            return res.status(404).send("File not found");
         }
-    }
-    return res.status(404).send("File not found");
+        const files = fs.readdirSync(path.join(__dirname, 'subtitles'));
+
+        for (let i = 0; i < files.length; i++) {
+            if (files[i].substring(0, files[i].lastIndexOf('.')) === (filePath)) {
+                return res.download(path.join(__dirname, 'subtitles', files[i]));
+            }
+        }
+
+        return res.status(404).send("File not found");
+    });
 });
 
 app.get("/profile-image", (req, res) => {
