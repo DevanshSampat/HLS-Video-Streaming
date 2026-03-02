@@ -185,6 +185,7 @@ const waitForFile = (filePath, timeout, callback) => {
 
 // Serve the HLS video files
 app.use('/stream', (req, res) => {
+    console.log(req.path);
     if (req.path.endsWith('.m3u8') || req.path.endsWith('.ts')) {
         const filePath = path.join(__dirname, decodeURIComponent(req.path)).replaceAll('\\', '/');
         if (fs.existsSync(filePath)) res.sendFile(filePath);
@@ -240,10 +241,10 @@ app.get("/videos", (req, res) => {
     let ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
     let isDirectConnection = false;
     try {
-        const tailscaleStatus = execSync('tailscale status', { encoding: 'utf8' });
+        const tailscaleStatus = execSync('tailscale ping ' + ip, { encoding: 'utf8' });
         const lines = tailscaleStatus.split('\n');
         for (let i = 0; i < lines.length; i++) {
-            if (lines[i].startsWith(ip) && lines[i].toLowerCase().includes(" direct")) {
+            if (lines[i].includes('DERP') || lines[i].includes('via 192.168.')) {
                 isDirectConnection = true;
             }
         }
