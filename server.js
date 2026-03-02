@@ -60,13 +60,6 @@ files.forEach(f => {
         console.log(`🗑️  Deleted incomplete stream directory: ${f}`);
     }
 });
-const subtitles = fs.existsSync(path.join(__dirname, 'subtitles')) ? fs.readdirSync(path.join(__dirname, 'subtitles')) : [];
-subtitles.forEach(f => {
-    if (!fs.existsSync(path.join(__dirname, 'streams', f.substring(0, f.lastIndexOf('.'))))) {
-        fs.unlinkSync(path.join(__dirname, 'subtitles', f));
-        console.log(`🗑️  Deleted orphaned subtitle file: ${f}`);
-    }
-});
 
 const getFolderPathToCastVideos = () => {
     if (fs.existsSync(path.join(__dirname, 'path.txt'))) {
