@@ -267,8 +267,9 @@ app.get("/videos", (req, res) => {
 
 app.get(`/download`, (req, res) => {
     let filePath = decodeURIComponent(req.query.id);
-    filePath = filePath.substring(filePath.indexOf('streams/') + 8);
-    filePath = filePath.substring(0, filePath.lastIndexOf('/'));
+    if(filePath.includes('streams/')) filePath = filePath.substring(filePath.indexOf('streams/') + 8);
+    if(filePath.includes('/master.m3u8')) filePath = filePath.substring(0, filePath.lastIndexOf('/'));
+    filePath = filePath.replaceAll('\\', '').replaceAll('/', '');
     filePath = fileIdPathMap[filePath];
     res.download(filePath);
 });
