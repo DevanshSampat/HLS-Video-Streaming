@@ -304,7 +304,8 @@ const waitForCurrentQualitiesToFinish = (currentSelectedQuality, qualities, call
     const approximateProcessedQualitySize = videoFileSize * (currentSelectedQuality.height / maxQuality.height);
     let currentlyProcessingSize = 0;
     for (const q of qualities) {
-        if (processingProgress[q.height] && processingProgress[q.height] > 0 && processingProgress[q.height] < 100) {
+        if(q.height === currentSelectedQuality.height) break;
+        if ((processingProgress[q.height] || 0) < 100) {
             currentlyProcessingSize += (videoFileSize * (q.height / maxQuality.height));
         }
     }
