@@ -9,6 +9,7 @@ const { exec } = require('child_process');
 const { execSync } = require('child_process');
 const e = require('express');
 const http = require('http');
+const { default: axios } = require('axios');
 const httpPort = 6969;
 let serverIpAddressResponse;
 
@@ -248,6 +249,13 @@ app.get("/videos", (req, res) => {
             }
         }
     } catch (err) { }
+    axios.post('http://localhost:9090', { message: `Device connected ${ip}: ${isDirectConnection ? 'Locally' : 'Remotely'}` })
+        .then(() => {
+            setTimeout(() => {
+                axios.post('http://localhost:9090', { message: '' })
+            })
+        })
+        .catch(() => { });
     res.statusCode = 200;
     res.contentType = "application/json";
     const response = [];
@@ -267,8 +275,8 @@ app.get("/videos", (req, res) => {
 
 app.get(`/download`, (req, res) => {
     let filePath = decodeURIComponent(req.query.id);
-    if(filePath.includes('streams/')) filePath = filePath.substring(filePath.indexOf('streams/') + 8);
-    if(filePath.includes('/master.m3u8')) filePath = filePath.substring(0, filePath.lastIndexOf('/'));
+    if (filePath.includes('streams/')) filePath = filePath.substring(filePath.indexOf('streams/') + 8);
+    if (filePath.includes('/master.m3u8')) filePath = filePath.substring(0, filePath.lastIndexOf('/'));
     filePath = filePath.replaceAll('\\', '').replaceAll('/', '');
     filePath = fileIdPathMap[filePath];
     res.download(filePath);
