@@ -253,7 +253,7 @@ app.get("/videos", (req, res) => {
         .then(() => {
             setTimeout(() => {
                 axios.post('http://localhost:9090', { message: '' })
-            })
+            }, 5000);
         })
         .catch(() => { });
     res.statusCode = 200;
