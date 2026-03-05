@@ -239,9 +239,10 @@ app.get('/', async (req, res) => {
 
 app.get("/videos", (req, res) => {
     let ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
-    let isDirectConnection = false;
+    let isDirectConnection = true;
     try {
         const tailscaleStatus = execSync('tailscale ping ' + ip, { encoding: 'utf8' });
+        isDirectConnection = false;
         const lines = tailscaleStatus.split('\n');
         for (let i = 0; i < lines.length; i++) {
             if (lines[i].includes('DERP') || lines[i].includes('via 192.168.')) {
@@ -451,6 +452,9 @@ const bringTailscaleUp = () => {
         execSync('tailscale version');
     } catch (err) {
         console.log('Streaming to your deivces on current WiFi network. If you wish to stream to your devices on other networks, please install Tailscale and run this server again.');
+        setTimeout(() => {
+            axios.post('http://localhost:9090', { message: 'Streaming to your deivces on current WiFi network. If you wish to stream to your devices on other networks, you can use tailscale' })
+        }, 5000);
         globalUrl = `http://${localIpAddress}:${PORT}`;
         if (serverIpAddressResponse) {
             serverIpAddressResponse.end(globalUrl);
