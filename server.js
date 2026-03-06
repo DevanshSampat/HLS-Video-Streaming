@@ -449,11 +449,14 @@ app.listen(PORT, () => {
 
 const bringTailscaleUp = () => {
     try {
-        execSync('tailscale version');
+        const tailscaleStatus = execSync('tailscale status');
     } catch (err) {
-        console.log('Streaming to your deivces on current WiFi network. If you wish to stream to your devices on other networks, please install Tailscale and run this server again.');
+        console.log('Streaming to your deivces on current WiFi network. If you wish to stream to your devices on other networks, please use tailscale');
         setTimeout(() => {
-            axios.post('http://localhost:9090', { message: 'Streaming to your deivces on current WiFi network. If you wish to stream to your devices on other networks, you can use tailscale' })
+            axios.post('http://localhost:9090', { message: 'Streaming to your deivces on current WiFi network. If you wish to stream to your devices on other networks, you can use or turn up tailscale and restart the server' })
+            setTimeout(() => {
+                axios.post('http://localhost:9090', { message: '' })
+            }, 10000);
         }, 5000);
         globalUrl = `http://${localIpAddress}:${PORT}`;
         if (serverIpAddressResponse) {
@@ -462,7 +465,7 @@ const bringTailscaleUp = () => {
         }
         return;
     }
-    exec(`cd ${__dirname} && tailscale up && tailscale funnel 9000`, (error, stdout, stderr) => { });
+    exec(`cd ${__dirname} && tailscale funnel 9000`, (error, stdout, stderr) => { });
     exec("tailscale status", (error, stdout, stderr) => {
         const lines = stdout.split('\n');
         for (let i = 0; i < lines.length; i++) {
