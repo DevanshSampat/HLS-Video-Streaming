@@ -240,6 +240,11 @@ app.get('/', async (req, res) => {
 app.get("/videos", (req, res) => {
     let ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
     let isDirectConnection = true;
+    let streamSingleQualityRemotely = false;
+    if(fs.existsSync(path.join(__dirname, 'userPreferences.json'))) {
+        const userPreferences = JSON.parse(fs.readFileSync(path.join(__dirname, 'userPreferences.json'), 'utf8'));
+        streamSingleQualityRemotely = userPreferences.streamSingleQualityRemotely || false;
+    }
     try {
         const tailscaleStatus = execSync('tailscale ping ' + ip, { encoding: 'utf8' });
         isDirectConnection = false;
@@ -265,7 +270,7 @@ app.get("/videos", (req, res) => {
         const fileName = path.basename(filePath);
         response.push({
             name: fileName,
-            path: isDirectConnection ? key : `streams/${key}/master.m3u8`,
+            path: isDirectConnection || !streamSingleQualityRemotely ? key : `streams/${key}/master.m3u8`,
             subtitle: true,
         });
     }
