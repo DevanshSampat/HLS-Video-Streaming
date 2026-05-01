@@ -274,7 +274,7 @@ app.get("/videos", (req, res) => {
         const fileName = path.basename(filePath);
         response.push({
             name: fileName,
-            path: (isDirectConnection && streamSingleQualityLocally) || !streamSingleQualityRemotely ? key : `streams/${key}/master.m3u8`,
+            path: (isDirectConnection && streamSingleQualityLocally) || (!isDirectConnection && streamSingleQualityRemotely) ? key : `streams/${key}/master.m3u8`,
             subtitle: true,
         });
     }
