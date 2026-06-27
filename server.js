@@ -78,6 +78,8 @@ const getFolderPathToCastVideos = () => {
     }
 }
 
+deleteFolderRecursive(path.join(__dirname, 'subtitles'));
+
 const exploreFolderForVideos = (folderPath) => {
     if (!fs.existsSync(folderPath)) {
         console.error("Folder does not exist:", folderPath);
