@@ -76,13 +76,19 @@ const COMMON_OPTIONS = [
 ];
 
 const processTrackSmartly = (input, mapIndex, output, isVideo, opts = {}, metadata, quality, validQualities) => {
-    if (isVideo) {
-        waitForCurrentQualitiesToFinish(quality, validQualities, () => {
-            processTrack(input, mapIndex, output, isVideo, opts, metadata, quality, validQualities);
-        })
-    } else {
-        processTrack(input, mapIndex, output, isVideo, opts, metadata, quality, validQualities);
-    }
+    return new Promise((resolve, reject) => {
+        if (isVideo) {
+            waitForCurrentQualitiesToFinish(quality, validQualities, () => {
+                processTrack(input, mapIndex, output, isVideo, opts, metadata, quality, validQualities)
+                    .then(resolve)
+                    .catch(reject);
+            });
+        } else {
+            processTrack(input, mapIndex, output, isVideo, opts, metadata, quality, validQualities)
+                .then(resolve)
+                .catch(reject);
+        }
+    });
 }
 
 // === HELPER: Transcode Single Track ===
@@ -243,7 +249,6 @@ async function main() {
         }
 
         try {
-            updateMasterPlaylist(validQualities, audioTracks);
             console.log(metadata.format.duration);
             if (fs.existsSync(path.join(__dirname, "isProcessing.txt"))) {
                 console.log("⏳ Another process is currently running. Retrying in 5 seconds...");
@@ -262,9 +267,10 @@ async function main() {
                 });
             }
 
-            // PHASE 2: Video Qualities (Update master BEFORE processing starts)
+            // PHASE 2: Video Qualities
             console.log(`\n🎬 PHASE 2: Processing ${validQualities.map(quality => quality.height).toString()} Video Qualities...`);
-            const activeQualities = [];
+            const activeQualities = [validQualities[0]];
+            updateMasterPlaylist(activeQualities, audioTracks);
 
             for (const q of validQualities) {
                 console.log(q);
@@ -274,16 +280,21 @@ async function main() {
             for (const q of validQualities) {
                 console.log(`\n🔹 Starting processing for ${q.height}p...`);
                 updateCurrentQualityOnProcessingFile(q, validQualities, "00:00:00", metadata);
-                const isFirst = activeQualities.length === 0;
-                // 1. Add to active list immediately
-                activeQualities.push(q);
-                // 2. Start transcoding this quality. Player will poll and wait for segments.
+                const isFirst = q === validQualities[0];
+                // Start transcoding this quality. Player will poll and wait for segments.
                 setTimeout(() => {
                     processTrackSmartly(INPUT_FILE, vStream.index, path.join(OUTPUT_DIR, `video_${isFirst ? "" : "temp_"}${q.height}p.m3u8`), true, {
                         height: q.height, bitrate: q.bitrate, segPath: path.join(OUTPUT_DIR, `video_${q.height}p_%03d.ts`)
-                    }, metadata, q, validQualities);
+                    }, metadata, q, validQualities).then(() => {
+                        if (!activeQualities.includes(q)) {
+                            activeQualities.push(q);
+                            updateMasterPlaylist(activeQualities, audioTracks);
+                        }
+                    }).catch(err => {
+                        console.error(`❌ Error processing quality ${q.height}p:`, err);
+                    });
                 }, delay);
-                delay += 5000; // Add 1 second delay before starting next quality to stagger them
+                delay += 5000; // Add 5 seconds delay before starting next quality to stagger them
             }
             waitForAllQualitiesToFinish(validQualities, () => {
                 fs.writeFileSync(path.join(OUTPUT_DIR, 'createdAt.txt'), `${Date.now()}`);

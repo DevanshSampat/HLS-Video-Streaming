@@ -378,7 +378,6 @@ app.post("/watch-details", (req, res) => {
 
 app.get("/watch-details", (req, res) => {
     const body = req.query;
-    console.log(body);
     if (!body.firebaseUid) {
         res.statusCode = 400;
         res.contentType = "application/json";
