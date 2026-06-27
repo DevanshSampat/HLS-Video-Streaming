@@ -297,10 +297,10 @@ app.get("/subtitles", (req, res) => {
     if (filePath.includes('streams/')) filePath = filePath.substring(filePath.indexOf('streams/') + 8);
     if (filePath.includes('/')) filePath = filePath.substring(0, filePath.lastIndexOf('/'));
     exec(`cd ${__dirname} && ${nodePath} extract_subtitles.js --id=${filePath}`, (error, stdout, stderr) => {
-        if (!fs.existsSync(path.join(__dirname, 'subtitles', `${req.query.id}.srt`))) {
+        if (!fs.existsSync(path.join(__dirname, 'subtitles', `${filePath}.srt`))) {
             return res.status(404).send("File not found");
         }
-        return res.download(path.join(__dirname, 'subtitles', `${req.query.id}.srt`));
+        return res.download(path.join(__dirname, 'subtitles', `${filePath}.srt`));
     });
 });
 
