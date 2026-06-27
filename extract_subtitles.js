@@ -170,7 +170,7 @@ async function processVideo(videoPath, index) {
                 const data = fs.readFileSync(path.join(subtitlesDir, largest), 'utf-8');
 
                 let index = 0;
-                let dataArray = data.replace(/\r\n/g, '\n').replaceAll("{\\an8}").split('\n');
+                let dataArray = data.replace(/\r\n/g, '\n').replaceAll("{\\an8}","").split('\n');
                 let processedData = '';
                 while (index < dataArray.length) {
                     if (dataArray[index].trim() === '') {
