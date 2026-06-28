@@ -53,7 +53,6 @@ const deleteFolderRecursive = (dirPath) => {
     }
 };
 
-
 const files = fs.existsSync(path.join(__dirname, 'streams')) ? fs.readdirSync(path.join(__dirname, 'streams')) : [];
 files.forEach(f => {
     if (!fs.existsSync(path.join(__dirname, 'streams', f, 'createdAt.txt'))) {
@@ -244,10 +243,10 @@ app.get("/videos", (req, res) => {
     let isDirectConnection = true;
     let streamSingleQualityRemotely = false;
     let streamSingleQualityLocally = true;
-    if(fs.existsSync(path.join(__dirname, 'userPreferences.json'))) {
+    if (fs.existsSync(path.join(__dirname, 'userPreferences.json'))) {
         const userPreferences = JSON.parse(fs.readFileSync(path.join(__dirname, 'userPreferences.json'), 'utf8'));
         streamSingleQualityRemotely = userPreferences.streamSingleQualityRemotely || false;
-        if(userPreferences.streamSingleQualityLocally !== undefined) {
+        if (userPreferences.streamSingleQualityLocally !== undefined) {
             streamSingleQualityLocally = userPreferences.streamSingleQualityLocally;
         }
     }
@@ -284,6 +283,40 @@ app.get("/videos", (req, res) => {
     res.send(response);
 });
 
+app.get("/stop-processing", (req, res) => {
+    if (fs.existsSync(`${__dirname}/isProcessing.txt`)) {
+        const data = fs.readFileSync(`${__dirname}/isProcessing.txt`, 'utf8').split('\n');
+        const id = data[0];
+        fs.writeFileSync(`${__dirname}/stop_processing.txt`, "yes");
+        setTimeout(() => {
+            deleteFolderRecursive(path.join(__dirname, "streams", id))
+        }, 5000);
+    }
+    res.json({ success: true })
+})
+
+app.get("/progress", (req, res) => {
+    if (fs.existsSync(`${__dirname}/isProcessing.txt`)) {
+        const response = {};
+        const data = fs.readFileSync(`${__dirname}/isProcessing.txt`, 'utf8').split('\n');
+        response.status = "Processing";
+        response.id = data[0];
+        response.path = JSON.parse(fs.readFileSync(`${__dirname}/videos_index.json`))[data[0]];
+        response.name = response.path.substring(response.path.lastIndexOf('\\') + 1);
+        const qualities = [];
+        for (let i = 1; i < data.length; i++) {
+            if (data[i].trim() === '') continue;
+            qualities.push({
+                quality: data[i].split(' ')[0],
+                progress: data[i].substring(data[i].indexOf('(') + 1, data[i].indexOf('%'))
+            })
+        }
+        response.qualities = qualities;
+        res.json(response)
+    } else {
+        res.json({ status: "Idle" })
+    }
+})
 
 app.get(`/download`, (req, res) => {
     let filePath = decodeURIComponent(req.query.id);

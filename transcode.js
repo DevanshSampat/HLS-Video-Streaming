@@ -340,6 +340,12 @@ const waitForCurrentQualitiesToFinish = (currentSelectedQuality, qualities, call
 }
 
 const updateCurrentQualityOnProcessingFile = (quality, allQualities, timeMark, metadata) => {
+    if(fs.existsSync(`${__dirname}/stop_processing.txt`)) {
+        axios.post('http://localhost:9090', { message: '' }).catch(() => { });
+        fs.unlinkSync(`${__dirname}/stop_processing.txt`);
+        fs.unlinkSync(`${__dirname}/isProcessing.txt`);
+        process.exit(0);
+    }
     let percent = 0;
     timeMark = timeMark.split('.')[0]; // Remove milliseconds
     const timeParts = timeMark.split(':').map(Number);
