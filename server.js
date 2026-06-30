@@ -415,6 +415,30 @@ function prefetchNextSegments(filePath) {
                         }
                     }
                 }
+
+                // 2. Fetch the next quality if it exists
+                const sortedQualities = [...qualities].sort((a, b) => a.height - b.height);
+                const currentQualIdx = sortedQualities.findIndex(q => q.height === parsed.height);
+                if (currentQualIdx !== -1 && currentQualIdx + 1 < sortedQualities.length) {
+                    const nextQuality = sortedQualities[currentQualIdx + 1];
+                    const nextHeight = nextQuality.height;
+                    const nextPrefix = `video_${nextHeight}p`;
+                    const nextVideoSegmentTime = nextHeight >= 1080 ? 8 : 12;
+                    const nextPrefetchCount = Math.ceil(120 / nextVideoSegmentTime);
+
+                    pruneQueueForQuality(dirPath, 'video', nextHeight, parsed.index, nextPrefetchCount);
+
+                    for (let i = 1; i <= nextPrefetchCount; i++) {
+                        const nextPath = path.join(dirPath, `${nextPrefix}_${String(parsed.index + i).padStart(3, '0')}.ts`).replaceAll('\\', '/');
+                        if (!fs.existsSync(nextPath)) {
+                            try {
+                                await prepareSegmentOnTheFly(nextPath, false); // Fetch sequentially
+                            } catch (e) {
+                                // Ignore
+                            }
+                        }
+                    }
+                }
             } else if (parsed.type === 'audio') {
                 const prefetchCount = Math.ceil(120 / 12);
                 pruneQueueForQuality(dirPath, 'audio', parsed.trackId, parsed.index, prefetchCount);
