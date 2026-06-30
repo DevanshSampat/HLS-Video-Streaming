@@ -315,9 +315,8 @@ function runNextInQueue() {
     if (activeTranscodeCount >= MAX_CONCURRENT) return;
     if (transcodeQueue.length === 0) return;
 
-    // Prioritize the requested segment over prefetch jobs:
-    // Sort queue so high priority (priority = true) comes first
-    transcodeQueue.sort((a, b) => (b.priority ? 1 : 0) - (a.priority ? 1 : 0));
+    // Prioritize tasks with higher numeric priority
+    transcodeQueue.sort((a, b) => b.priority - a.priority);
 
     const task = transcodeQueue.shift();
     activeTranscodeCount++;
@@ -349,7 +348,7 @@ function pruneQueueForQuality(dirPath, type, identifier, currentIndex, prefetchC
 
     for (let i = transcodeQueue.length - 1; i >= 0; i--) {
         const task = transcodeQueue[i];
-        if (!task.priority && path.dirname(task.filePath) === dirPath) {
+        if (task.priority === 0 && path.dirname(task.filePath) === dirPath) {
             const taskParsed = parseSegmentPath(task.filePath);
             if (taskParsed) {
                 const isMatch = (type === 'video' && taskParsed.type === 'video' && taskParsed.height === identifier) ||
@@ -431,10 +430,8 @@ async function prepareSegmentOnTheFly(filePath, isHighPriority = true) {
     const normalizedPath = path.normalize(filePath).replaceAll('\\', '/');
     if (activeTranscodes[normalizedPath]) {
         const active = activeTranscodes[normalizedPath];
-        if (isHighPriority && !active.priority) {
-            active.priority = true;
-            console.log(`[Queue] Upgraded priority to high for: ${path.basename(normalizedPath)}`);
-        }
+        active.priority += 1;
+        console.log(`[Queue] Increased priority to ${active.priority} for: ${path.basename(normalizedPath)}`);
         return active.promise;
     }
 
@@ -446,7 +443,7 @@ async function prepareSegmentOnTheFly(filePath, isHighPriority = true) {
 
     const task = {
         filePath: normalizedPath,
-        priority: isHighPriority,
+        priority: isHighPriority ? 1 : 0,
         promise,
         resolve: taskResolve,
         reject: taskReject,
