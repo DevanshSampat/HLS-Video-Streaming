@@ -524,7 +524,7 @@ async function performTranscode(filePath) {
         const isOriginalQuality = (height === maxHeight);
 
         // Stream copy if it is the original quality and the source codec is H.264
-        const canStreamCopy = isOriginalQuality && videoCodec && (videoCodec === 'h264');
+        const canStreamCopy = false; // Disabled to prevent frame repetition and stitching issues caused by non-frame-accurate seeking during copying
 
         if (canStreamCopy) {
             console.log(`[Transcode] Remuxing (copying stream) for original quality segment: ${fileName} (Codec: ${videoCodec})`);
