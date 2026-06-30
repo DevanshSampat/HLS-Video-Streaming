@@ -15,6 +15,24 @@ let serverIpAddressResponse;
 let lastRequestTime = {};
 const deletionInterval = 5 * 60 * 1000;
 
+const deleteFolderRecursive = (dirPath) => {
+    if (fs.existsSync(dirPath)) {
+        fs.readdirSync(dirPath).forEach(function (file) {
+            var curPath = dirPath + "/" + file;
+            if (fs.lstatSync(curPath).isDirectory()) {
+                // recurse
+                deleteFolderRecursive(curPath);
+            } else {
+                // delete file
+                fs.unlinkSync(curPath);
+            }
+        });
+        fs.rmdirSync(dirPath);
+    }
+};
+
+deleteFolderRecursive(path.join(__dirname, "streams"));
+
 const deleteChunkedFiles = () => {
     if (!fs.existsSync(path.join(__dirname, 'streams'))) return;
     const files = fs.readdirSync(path.join(__dirname, 'streams'));
@@ -23,7 +41,7 @@ const deleteChunkedFiles = () => {
             return;
         }
         const chunks = fs.readdirSync(path.join(__dirname, 'streams', f)).filter(c => c.endsWith('.ts'));
-        if(chunks.length > 0) console.log(`Deleting chunks for video: ${f}`);
+        if (chunks.length > 0) console.log(`Deleting chunks for video: ${f}`);
         for (let i = 0; i < chunks.length; i++) {
             fs.unlinkSync(path.join(__dirname, 'streams', f, chunks[i]));
         }
@@ -85,23 +103,6 @@ http.createServer((req, res) => {
         res.end("no");
     }
 }).listen(httpPort);
-
-
-const deleteFolderRecursive = (dirPath) => {
-    if (fs.existsSync(dirPath)) {
-        fs.readdirSync(dirPath).forEach(function (file) {
-            var curPath = dirPath + "/" + file;
-            if (fs.lstatSync(curPath).isDirectory()) {
-                // recurse
-                deleteFolderRecursive(curPath);
-            } else {
-                // delete file
-                fs.unlinkSync(curPath);
-            }
-        });
-        fs.rmdirSync(dirPath);
-    }
-};
 
 const files = fs.existsSync(path.join(__dirname, 'streams')) ? fs.readdirSync(path.join(__dirname, 'streams')) : [];
 files.forEach(f => {
@@ -606,7 +607,7 @@ async function performTranscode(filePath) {
 // Middleware to set correct headers for HLS files and transcode segments on the fly
 app.use('/stream', async (req, res, next) => {
     let id = req.path;
-    if(id.includes("streams/")) {
+    if (id.includes("streams/")) {
         id = id.substring(id.lastIndexOf("streams/") + 8);
         id = id.substring(0, id.lastIndexOf('/'));
     }
