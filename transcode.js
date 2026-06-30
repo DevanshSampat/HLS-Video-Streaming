@@ -68,7 +68,7 @@ const ALL_VIDEO_QUALITIES = [
 ];
 
 const COMMON_OPTIONS = [
-    '-hls_time', '6',
+    '-hls_time', '12',
     '-hls_list_size', '0',
     '-hls_playlist_type', 'event', // CHANGED: 'event' allows live playback
     '-sn', '-dn', '-map_metadata', '-1',
@@ -77,17 +77,9 @@ const COMMON_OPTIONS = [
 
 const processTrackSmartly = (input, mapIndex, output, isVideo, opts = {}, metadata, quality, validQualities) => {
     return new Promise((resolve, reject) => {
-        if (isVideo) {
-            waitForCurrentQualitiesToFinish(quality, validQualities, () => {
-                processTrack(input, mapIndex, output, isVideo, opts, metadata, quality, validQualities)
-                    .then(resolve)
-                    .catch(reject);
-            });
-        } else {
-            processTrack(input, mapIndex, output, isVideo, opts, metadata, quality, validQualities)
-                .then(resolve)
-                .catch(reject);
-        }
+        processTrack(input, mapIndex, output, isVideo, opts, metadata, quality, validQualities)
+            .then(resolve)
+            .catch(reject);
     });
 }
 
@@ -104,7 +96,8 @@ function processTrack(input, mapIndex, output, isVideo, opts = {}, metadata, qua
                 '-an', '-c:v', 'libx264', '-vf', `scale=-2:${safeHeight}`,
                 '-b:v', opts.bitrate, '-maxrate', opts.bitrate, '-bufsize', `${parseInt(opts.bitrate) * 2}k`,
                 '-profile:v', 'main', '-pix_fmt', 'yuv420p', '-crf', '23', '-preset', 'veryfast',
-                '-force_key_frames', 'expr:gte(t,n_forced*6)', '-sc_threshold', '0'
+                '-force_key_frames', 'expr:gte(t,n_forced*12)', '-sc_threshold', '0',
+                '-threads', '1'
             );
         } else {
             specific.push('-vn', '-c:a', 'aac', '-ac', '2', '-ar', '44100');
@@ -269,7 +262,7 @@ async function main() {
 
             // PHASE 2: Video Qualities
             console.log(`\n🎬 PHASE 2: Processing ${validQualities.map(quality => quality.height).toString()} Video Qualities...`);
-            const activeQualities = [validQualities[0]];
+            const activeQualities = [...validQualities];
             updateMasterPlaylist(activeQualities, audioTracks);
 
             for (const q of validQualities) {
@@ -280,10 +273,9 @@ async function main() {
             for (const q of validQualities) {
                 console.log(`\n🔹 Starting processing for ${q.height}p...`);
                 updateCurrentQualityOnProcessingFile(q, validQualities, "00:00:00", metadata);
-                const isFirst = q === validQualities[0];
                 // Start transcoding this quality. Player will poll and wait for segments.
                 setTimeout(() => {
-                    processTrackSmartly(INPUT_FILE, vStream.index, path.join(OUTPUT_DIR, `video_${isFirst ? "" : "temp_"}${q.height}p.m3u8`), true, {
+                    processTrackSmartly(INPUT_FILE, vStream.index, path.join(OUTPUT_DIR, `video_${q.height}p.m3u8`), true, {
                         height: q.height, bitrate: q.bitrate, segPath: path.join(OUTPUT_DIR, `video_${q.height}p_%03d.ts`)
                     }, metadata, q, validQualities).then(() => {
                         if (!activeQualities.includes(q)) {
