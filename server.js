@@ -15,6 +15,17 @@ let serverIpAddressResponse;
 let lastRequestTime = {};
 const deletionInterval = 5 * 60 * 1000;
 
+const pixelToMapPriority = {
+    "144p": 1,
+    "240p": 2,
+    "360p": 3,
+    "480p": 4,
+    "720p": 5,
+    "1080p": 5,
+    "1440p": 4,
+    "2160p": 3
+}
+
 const deleteFolderRecursive = (dirPath) => {
     if (fs.existsSync(dirPath)) {
         fs.readdirSync(dirPath).forEach(function (file) {
@@ -430,7 +441,11 @@ async function prepareSegmentOnTheFly(filePath, isHighPriority = true) {
     const normalizedPath = path.normalize(filePath).replaceAll('\\', '/');
     if (activeTranscodes[normalizedPath]) {
         const active = activeTranscodes[normalizedPath];
-        active.priority += 1;
+        if (path.basename(normalizedPath).startsWith("video")) {
+            const pixels = path.basename(normalizedPath).split('_')[1];
+            active.priority += (pixelToMapPriority[pixels] || 1);
+        }
+        else active.priority += 1;
         console.log(`[Queue] Increased priority to ${active.priority} for: ${path.basename(normalizedPath)}`);
         return active.promise;
     }
