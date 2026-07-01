@@ -606,7 +606,8 @@ async function prepareSegmentOnTheFly(filePath, isHighPriority = true) {
         run: async () => {
             task.isRunning = true;
             try {
-                axios.post('http://localhost:9090', { message: `Transcoding ${path.basename(normalizedPath)}` }).catch(() => { });
+                const message = `Transcoding ${path.basename(normalizedPath)} (priority: ${cachedPreferredQuality[path.dirname(normalizedPath)]}p)`;
+                axios.post('http://localhost:9090', { message }).catch(() => { });
                 await performTranscode(normalizedPath, (cmd) => {
                     task.process = cmd;
                 });
