@@ -17,13 +17,13 @@ const deletionInterval = 5 * 60 * 1000;
 
 const pixelToMapPriority = {
     "144p": 1,
-    "240p": 2,
-    "360p": 3,
-    "480p": 4,
-    "720p": 5,
-    "1080p": 5,
-    "1440p": 4,
-    "2160p": 3
+    "240p": 1,
+    "360p": 1,
+    "480p": 1,
+    "720p": 1,
+    "1080p": 1,
+    "1440p": 1,
+    "2160p": 1
 }
 
 const deleteFolderRecursive = (dirPath) => {
@@ -321,21 +321,56 @@ const activeTranscodes = {};
 const transcodeQueue = [];
 let activeTranscodeCount = 0;
 const MAX_CONCURRENT = Math.max(1, os.cpus().length - 1);
+const MAX_PREFETCH_CONCURRENT = Math.max(1, MAX_CONCURRENT - 1); // reserve 1 slot for foreground
+let activePrefetchCount = 0;
 
 function runNextInQueue() {
-    if (activeTranscodeCount >= MAX_CONCURRENT) return;
-    if (transcodeQueue.length === 0) return;
-
     // Prioritize tasks with higher numeric priority
     transcodeQueue.sort((a, b) => b.priority - a.priority);
 
-    const task = transcodeQueue.shift();
-    activeTranscodeCount++;
+    for (let i = 0; i < transcodeQueue.length; i++) {
+        const task = transcodeQueue[i];
+        const isForeground = task.priority >= 1;
 
-    task.run().finally(() => {
-        activeTranscodeCount--;
-        runNextInQueue();
-    });
+        if (activeTranscodeCount >= MAX_CONCURRENT) {
+            if (isForeground) {
+                // Find a running background task to preempt
+                const runningTasks = Object.values(activeTranscodes);
+                const preemptableTask = runningTasks.find(t => t.isRunning && t.priority === 0 && !t.preempted);
+                if (preemptableTask) {
+                    console.log(`[Queue] Preempting background task: ${path.basename(preemptableTask.filePath)} for foreground task: ${path.basename(task.filePath)}`);
+                    preemptableTask.preempted = true;
+                    if (preemptableTask.process) {
+                        try {
+                            preemptableTask.process.kill('SIGKILL');
+                        } catch (err) {
+                            console.error(`Failed to kill process:`, err);
+                        }
+                    }
+                    break;
+                }
+            }
+            break;
+        }
+
+        if (!isForeground && activePrefetchCount >= MAX_PREFETCH_CONCURRENT) {
+            continue;
+        }
+
+        const wasPrefetch = !isForeground;
+
+        // Start the task
+        transcodeQueue.splice(i, 1);
+        i--;
+        activeTranscodeCount++;
+        if (wasPrefetch) activePrefetchCount++;
+
+        task.run().finally(() => {
+            activeTranscodeCount--;
+            if (wasPrefetch) activePrefetchCount--;
+            runNextInQueue();
+        });
+    }
 }
 
 function parseSegmentPath(filePath) {
@@ -371,6 +406,89 @@ function pruneQueueForQuality(dirPath, type, identifier, currentIndex, prefetchC
                         task.reject(new Error(`Prefetch task cancelled/pruned`));
                     }
                     console.log(`[Queue] Pruned obsolete prefetch task: ${path.basename(task.filePath)}`);
+                }
+            }
+        }
+    }
+}
+
+const qualityRequestsHistory = {};
+
+function recordQualityRequest(dirPath, height) {
+    if (!qualityRequestsHistory[dirPath]) {
+        qualityRequestsHistory[dirPath] = [];
+    }
+    const now = Date.now();
+    qualityRequestsHistory[dirPath].push({ timestamp: now, height });
+    
+    // Prune history older than 5 minutes
+    qualityRequestsHistory[dirPath] = qualityRequestsHistory[dirPath].filter(
+        req => (now - req.timestamp) <= 5 * 60 * 1000
+    );
+}
+
+function getPreferredQuality(dirPath) {
+    const history = qualityRequestsHistory[dirPath];
+    if (!history || history.length === 0) return null;
+
+    const counts = {};
+    let maxCount = 0;
+    let preferred = null;
+
+    for (const req of history) {
+        counts[req.height] = (counts[req.height] || 0) + 1;
+        if (counts[req.height] > maxCount) {
+            maxCount = counts[req.height];
+            preferred = req.height;
+        }
+    }
+    return preferred;
+}
+
+function prunePriorChunks(filePath) {
+    const parsed = parseSegmentPath(filePath);
+    if (!parsed) return;
+
+    const dirPath = path.dirname(filePath);
+    const segTime = (parsed.type === 'video') ? (parsed.height >= 1080 ? 8 : 12) : 12;
+
+    // Prune pending tasks in transcodeQueue
+    for (let i = transcodeQueue.length - 1; i >= 0; i--) {
+        const task = transcodeQueue[i];
+        if (path.dirname(task.filePath) === dirPath) {
+            const taskParsed = parseSegmentPath(task.filePath);
+            if (taskParsed && taskParsed.type === parsed.type) {
+                const taskSegTime = (taskParsed.type === 'video') ? (taskParsed.height >= 1080 ? 8 : 12) : 12;
+                const timeDiff = (parsed.index - taskParsed.index) * taskSegTime;
+                if (timeDiff > 120) {
+                    transcodeQueue.splice(i, 1);
+                    delete activeTranscodes[task.filePath];
+                    if (task.reject) {
+                        task.reject(new Error(`Pruned: chunk more than 2 minutes prior to playback`));
+                    }
+                    console.log(`[Queue] Pruned pending prior chunk: ${path.basename(task.filePath)}`);
+                }
+            }
+        }
+    }
+
+    // Cancel active/running tasks that are more than 2 minutes prior
+    const runningTasks = Object.values(activeTranscodes);
+    for (const task of runningTasks) {
+        if (task.isRunning && path.dirname(task.filePath) === dirPath) {
+            const taskParsed = parseSegmentPath(task.filePath);
+            if (taskParsed && taskParsed.type === parsed.type) {
+                const taskSegTime = (taskParsed.type === 'video') ? (taskParsed.height >= 1080 ? 8 : 12) : 12;
+                const timeDiff = (parsed.index - taskParsed.index) * taskSegTime;
+                if (timeDiff > 120) {
+                    console.log(`[Queue] Canceling active prior chunk: ${path.basename(task.filePath)}`);
+                    if (task.process) {
+                        try {
+                            task.process.kill('SIGKILL');
+                        } catch (err) {
+                            console.error(`Failed to kill process:`, err);
+                        }
+                    }
                 }
             }
         }
@@ -416,23 +534,34 @@ function prefetchNextSegments(filePath) {
                     }
                 }
 
-                // 2. Fetch the next quality if it exists
+                // 2. Fetch the adjacent qualities (one tier up and one tier down) if they exist
                 const sortedQualities = [...qualities].sort((a, b) => a.height - b.height);
                 const currentQualIdx = sortedQualities.findIndex(q => q.height === parsed.height);
-                if (currentQualIdx !== -1 && currentQualIdx + 1 < sortedQualities.length) {
-                    const nextQuality = sortedQualities[currentQualIdx + 1];
-                    const nextHeight = nextQuality.height;
-                    const nextPrefix = `video_${nextHeight}p`;
-                    const nextVideoSegmentTime = nextHeight >= 1080 ? 8 : 12;
-                    const nextPrefetchCount = Math.ceil(120 / nextVideoSegmentTime);
+                
+                const adjacentIndices = [];
+                if (currentQualIdx !== -1) {
+                    if (currentQualIdx + 1 < sortedQualities.length) {
+                        adjacentIndices.push(currentQualIdx + 1); // One tier up
+                    }
+                    if (currentQualIdx - 1 >= 0) {
+                        adjacentIndices.push(currentQualIdx - 1); // One tier down
+                    }
+                }
 
-                    pruneQueueForQuality(dirPath, 'video', nextHeight, parsed.index, nextPrefetchCount);
+                for (const adjIdx of adjacentIndices) {
+                    const adjQuality = sortedQualities[adjIdx];
+                    const adjHeight = adjQuality.height;
+                    const adjPrefix = `video_${adjHeight}p`;
+                    const adjVideoSegmentTime = adjHeight >= 1080 ? 8 : 12;
+                    const adjPrefetchCount = Math.ceil(120 / adjVideoSegmentTime);
 
-                    for (let i = 1; i <= nextPrefetchCount; i++) {
-                        const nextPath = path.join(dirPath, `${nextPrefix}_${String(parsed.index + i).padStart(3, '0')}.ts`).replaceAll('\\', '/');
-                        if (!fs.existsSync(nextPath)) {
+                    pruneQueueForQuality(dirPath, 'video', adjHeight, parsed.index, adjPrefetchCount);
+
+                    for (let i = 1; i <= adjPrefetchCount; i++) {
+                        const adjPath = path.join(dirPath, `${adjPrefix}_${String(parsed.index + i).padStart(3, '0')}.ts`).replaceAll('\\', '/');
+                        if (!fs.existsSync(adjPath)) {
                             try {
-                                await prepareSegmentOnTheFly(nextPath, false); // Fetch sequentially
+                                await prepareSegmentOnTheFly(adjPath, false); // Fetch sequentially
                             } catch (e) {
                                 // Ignore
                             }
@@ -480,21 +609,49 @@ async function prepareSegmentOnTheFly(filePath, isHighPriority = true) {
         taskReject = reject;
     });
 
+    const parsed = parseSegmentPath(filePath);
+    let initialPriority = isHighPriority ? 1 : 0;
+    if (!isHighPriority && parsed && parsed.type === 'video') {
+        const preferred = getPreferredQuality(path.dirname(filePath));
+        if (preferred !== null && parsed.height === preferred) {
+            initialPriority = 1; // Elevate priority to high/foreground priority
+            console.log(`[Queue] Elevated priority to 1 for preferred quality prefetch chunk: ${path.basename(normalizedPath)}`);
+        }
+    }
+
     const task = {
         filePath: normalizedPath,
-        priority: isHighPriority ? 1 : 0,
+        priority: initialPriority,
         promise,
         resolve: taskResolve,
         reject: taskReject,
+        process: null,
+        isRunning: false,
+        preempted: false,
         run: async () => {
+            task.isRunning = true;
+            task.preempted = false;
             try {
                 axios.post('http://localhost:9090', { message: `Transcoding ${path.basename(normalizedPath)}` }).catch(() => { });
-                await performTranscode(normalizedPath);
+                await performTranscode(normalizedPath, (cmd) => {
+                    task.process = cmd;
+                });
                 taskResolve();
             } catch (err) {
+                if (task.preempted) {
+                    console.log(`[Queue] Task was preempted: ${path.basename(normalizedPath)}. Re-queueing.`);
+                    task.isRunning = false;
+                    task.process = null;
+                    transcodeQueue.push(task);
+                    return;
+                }
                 taskReject(err);
             } finally {
-                delete activeTranscodes[normalizedPath];
+                if (!task.preempted) {
+                    task.isRunning = false;
+                    task.process = null;
+                    delete activeTranscodes[normalizedPath];
+                }
             }
         }
     };
@@ -507,7 +664,7 @@ async function prepareSegmentOnTheFly(filePath, isHighPriority = true) {
     return promise;
 }
 
-async function performTranscode(filePath) {
+async function performTranscode(filePath, onCmdReady) {
     const dirPath = path.dirname(filePath);
     const fileName = path.basename(filePath);
     const metaPath = path.join(dirPath, 'metadata.json');
@@ -599,6 +756,7 @@ async function performTranscode(filePath) {
 
     await new Promise((resolve, reject) => {
         const cmd = ffmpeg(sourcePath);
+        if (onCmdReady) onCmdReady(cmd);
         // Optimize input seeking
         cmd.inputOptions([
             '-ss', startTime.toString(),
@@ -662,6 +820,11 @@ app.use('/stream', async (req, res, next) => {
                 }
             }
         } else if (filePath.endsWith('.ts')) {
+            prunePriorChunks(filePath);
+            const parsed = parseSegmentPath(filePath);
+            if (parsed && parsed.type === 'video') {
+                recordQualityRequest(path.dirname(filePath), parsed.height);
+            }
             res.setHeader('Content-Type', 'video/mp2t');
             if (!fs.existsSync(filePath)) {
                 try {
