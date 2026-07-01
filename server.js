@@ -15,6 +15,11 @@ let serverIpAddressResponse;
 let lastRequestTime = {};
 const deletionInterval = 5 * 60 * 1000;
 
+let streamLocally = false;
+if (fs.existsSync(path.join(__dirname, 'userPreferences.json'))) {
+    streamLocally = JSON.parse(fs.readFileSync(path.join(__dirname, 'userPreferences.json'), 'utf8')).streamLocally;
+}
+
 const pixelToMapPriority = {
     "144p": 1,
     "240p": 1,
@@ -338,9 +343,9 @@ function runNextInQueue() {
 
         if (aIsPreferred && !bIsPreferred) return -1;
         if (!aIsPreferred && bIsPreferred) return 1;
-        if(aParsed.index > bParsed.index) return 1;
-        if(aParsed.index < bParsed.index) return -1;
-        return 0; 
+        if (aParsed.index > bParsed.index) return 1;
+        if (aParsed.index < bParsed.index) return -1;
+        return 0;
     });
 
     const task = transcodeQueue.shift();
@@ -432,7 +437,7 @@ function recordQualityRequest(dirPath, height) {
         qualityRequestsHistory[dirPath] = [];
     }
     qualityRequestsHistory[dirPath].push({ timestamp: Date.now(), height });
-    
+
     // Set immediate initial cache if not set yet
     if (cachedPreferredQuality[dirPath] === undefined) {
         cachedPreferredQuality[dirPath] = height;
@@ -531,7 +536,7 @@ function prefetchNextSegments(filePath) {
                 // 2. Fetch the adjacent qualities (one tier up and one tier down) if they exist
                 const sortedQualities = [...qualities].sort((a, b) => a.height - b.height);
                 const currentQualIdx = sortedQualities.findIndex(q => q.height === parsed.height);
-                
+
                 const adjacentIndices = [];
                 if (currentQualIdx !== -1) {
                     if (currentQualIdx + 1 < sortedQualities.length) {
@@ -1120,6 +1125,14 @@ app.listen(PORT, async () => {
 
 
 const bringTailscaleUp = () => {
+    if (streamLocally) {
+        globalUrl = `http://${localIpAddress}:${PORT}`;
+        if (serverIpAddressResponse) {
+            serverIpAddressResponse.end(globalUrl);
+            serverIpAddressResponse = null;
+        }
+        return;
+    }
     exec(`cd ${__dirname} && tailscale up && tailscale funnel 9000`, (error, stdout, stderr) => { });
     exec("tailscale status", (error, stdout, stderr) => {
         if (stderr) {
