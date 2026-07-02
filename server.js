@@ -337,7 +337,7 @@ function runNextInQueue() {
     transcodeQueue.sort((a, b) => {
         const aParsed = parseSegmentPath(a.filePath);
         const bParsed = parseSegmentPath(b.filePath);
-        
+
         const aPref = aParsed ? cachedPreferredQuality[path.basename(path.dirname(a.filePath))] : null;
         const bPref = bParsed ? cachedPreferredQuality[path.basename(path.dirname(b.filePath))] : null;
 
@@ -347,10 +347,12 @@ function runNextInQueue() {
         const aIsPreferred = aParsed && aParsed.type === 'video' && aParsed.height === aPref && aParsed.index >= aCurrentChunk - 10 && aParsed.index < aCurrentChunk + 5;
         const bIsPreferred = bParsed && bParsed.type === 'video' && bParsed.height === bPref && bParsed.index >= bCurrentChunk - 10 && bParsed.index < bCurrentChunk + 5;
 
+        if (aIsPreferred && aParsed.index === aCurrentChunk) return -1;
+        if (bIsPreferred && bParsed.index === bCurrentChunk) return 1;
         if (aIsPreferred && !bIsPreferred) return -1;
         if (!aIsPreferred && bIsPreferred) return 1;
-        if(aParsed.index >= aCurrentChunk - 10 && bParsed.index < bCurrentChunk - 10) return -1;
-        if(aParsed.index < aCurrentChunk - 10 && bParsed.index >= bCurrentChunk - 10) return 1;
+        if (aParsed.index >= aCurrentChunk - 10 && bParsed.index < bCurrentChunk - 10) return -1;
+        if (aParsed.index < aCurrentChunk - 10 && bParsed.index >= bCurrentChunk - 10) return 1;
         if (aParsed.index > bParsed.index) return 1;
         if (aParsed.index < bParsed.index) return -1;
         return 0;
@@ -425,10 +427,10 @@ function prefetchNextSegments(filePath) {
 
         (async () => {
             if (parsed.type === 'video') {
-                // 1. Fetch the requested quality first (upcoming 2 minutes)
+                // 1. Fetch the requested quality first (upcoming 1 minutes)
                 const requestedPrefix = `video_${parsed.height}p`;
                 const videoSegmentTime = 12;
-                const prefetchCount = Math.ceil(120 / videoSegmentTime);
+                const prefetchCount = Math.ceil(60 / videoSegmentTime);
 
                 pruneQueueForQuality(dirPath, 'video', parsed.height, parsed.index, prefetchCount);
 
@@ -439,41 +441,6 @@ function prefetchNextSegments(filePath) {
                             await prepareSegmentOnTheFly(nextPath, false); // Fetch sequentially
                         } catch (e) {
                             // Ignore
-                        }
-                    }
-                }
-
-                // 2. Fetch the adjacent qualities (one tier up and one tier down) if they exist
-                const sortedQualities = [...qualities].sort((a, b) => a.height - b.height);
-                const currentQualIdx = sortedQualities.findIndex(q => q.height === parsed.height);
-
-                const adjacentIndices = [];
-                if (currentQualIdx !== -1) {
-                    if (currentQualIdx + 1 < sortedQualities.length) {
-                        adjacentIndices.push(currentQualIdx + 1); // One tier up
-                    }
-                    if (currentQualIdx - 1 >= 0) {
-                        adjacentIndices.push(currentQualIdx - 1); // One tier down
-                    }
-                }
-
-                for (const adjIdx of adjacentIndices) {
-                    const adjQuality = sortedQualities[adjIdx];
-                    const adjHeight = adjQuality.height;
-                    const adjPrefix = `video_${adjHeight}p`;
-                    const adjVideoSegmentTime = 12;
-                    const adjPrefetchCount = Math.ceil(120 / adjVideoSegmentTime);
-
-                    pruneQueueForQuality(dirPath, 'video', adjHeight, parsed.index, adjPrefetchCount);
-
-                    for (let i = 1; i <= adjPrefetchCount; i++) {
-                        const adjPath = path.join(dirPath, `${adjPrefix}_${String(parsed.index + i).padStart(3, '0')}.ts`).replaceAll('\\', '/');
-                        if (!fs.existsSync(adjPath)) {
-                            try {
-                                await prepareSegmentOnTheFly(adjPath, false); // Fetch sequentially
-                            } catch (e) {
-                                // Ignore
-                            }
                         }
                     }
                 }
