@@ -644,6 +644,10 @@ async function performTranscode(filePath, onCmdReady) {
         throw new Error(`Metadata file not found: ${metaPath}`);
     }
 
+    if (fs.existsSync(path.join(__dirname, "streams", path.dirname(filePath), path.basename(filePath)))) {
+        return;
+    }
+
     const metadata = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
     const { sourcePath, videoStreamIndex, audioTracks, qualities } = metadata;
 
