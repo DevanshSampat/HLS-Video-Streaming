@@ -15,6 +15,7 @@ let serverIpAddressResponse;
 let lastRequestTime = {};
 const deletionInterval = 5 * 60 * 1000;
 const currentlyProcessingChunks = {};
+const cachedPreferredQuality = {};
 
 let streamLocally = false;
 if (fs.existsSync(path.join(__dirname, 'userPreferences.json'))) {
@@ -337,8 +338,8 @@ function runNextInQueue() {
         const aParsed = parseSegmentPath(a.filePath);
         const bParsed = parseSegmentPath(b.filePath);
         
-        const aPref = aParsed ? cachedPreferredQuality[path.dirname(a.filePath)] : null;
-        const bPref = bParsed ? cachedPreferredQuality[path.dirname(b.filePath)] : null;
+        const aPref = aParsed ? cachedPreferredQuality[path.basename(path.dirname(a.filePath))] : null;
+        const bPref = bParsed ? cachedPreferredQuality[path.basename(path.dirname(b.filePath))] : null;
 
         const aCurrentChunk = currentlyProcessingChunks[path.basename(path.dirname(a.filePath))] || 0;
         const bCurrentChunk = currentlyProcessingChunks[path.basename(path.dirname(b.filePath))] || 0;
@@ -400,19 +401,6 @@ function pruneQueueForQuality(dirPath, type, identifier, currentIndex, prefetchC
                 }
             }
         }
-    }
-}
-
-
-function recordQualityRequest(dirPath, height) {
-    if (!qualityRequestsHistory[dirPath]) {
-        qualityRequestsHistory[dirPath] = [];
-    }
-    qualityRequestsHistory[dirPath].push({ timestamp: Date.now(), height });
-
-    // Set immediate initial cache if not set yet
-    if (cachedPreferredQuality[dirPath] === undefined) {
-        cachedPreferredQuality[dirPath] = height;
     }
 }
 
@@ -533,7 +521,7 @@ async function prepareSegmentOnTheFly(filePath, isHighPriority = true) {
         run: async () => {
             task.isRunning = true;
             try {
-                const message = `Transcoding ${path.basename(normalizedPath)} (priority: ${cachedPreferredQuality[path.dirname(normalizedPath)]}p, currentIndex: ${currentlyProcessingChunks[path.basename(path.dirname(normalizedPath))]})`;
+                const message = `Transcoding ${path.basename(normalizedPath)} (priority: ${cachedPreferredQuality[path.basename(path.dirname(normalizedPath))]}p, currentIndex: ${currentlyProcessingChunks[path.basename(path.dirname(normalizedPath))]})`;
                 console.log(message);
                 axios.post('http://localhost:9090', { message }).catch(() => { });
                 await performTranscode(normalizedPath, (cmd) => {
@@ -711,7 +699,7 @@ app.use('/stream', async (req, res, next) => {
         } else if (filePath.endsWith('.ts')) {
             const parsed = parseSegmentPath(filePath);
             if (parsed && parsed.type === 'video') {
-                recordQualityRequest(path.dirname(filePath), parsed.height);
+                cachedPreferredQuality[id] = parsed.height || 144;
             }
             currentlyProcessingChunks[id] = parsed.index;
             res.setHeader('Content-Type', 'video/mp2t');
