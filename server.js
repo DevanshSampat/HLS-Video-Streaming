@@ -14,6 +14,7 @@ const httpPort = 6969;
 let serverIpAddressResponse;
 let lastRequestTime = {};
 const deletionInterval = 5 * 60 * 1000;
+const currentlyProcessingChunks = {};
 
 let streamLocally = false;
 if (fs.existsSync(path.join(__dirname, 'userPreferences.json'))) {
@@ -331,18 +332,24 @@ function runNextInQueue() {
     if (activeTranscodeCount >= MAX_CONCURRENT) return;
     if (transcodeQueue.length === 0) return;
 
-    // Sort queue based on preferredQuality
+    // Sort queue based on preferredQuality and current processing chunk
     transcodeQueue.sort((a, b) => {
         const aParsed = parseSegmentPath(a.filePath);
         const bParsed = parseSegmentPath(b.filePath);
+        
         const aPref = aParsed ? cachedPreferredQuality[path.dirname(a.filePath)] : null;
         const bPref = bParsed ? cachedPreferredQuality[path.dirname(b.filePath)] : null;
 
-        const aIsPreferred = aParsed && aParsed.type === 'video' && aParsed.height === aPref;
-        const bIsPreferred = bParsed && bParsed.type === 'video' && bParsed.height === bPref;
+        const aCurrentChunk = currentlyProcessingChunks[path.basename(path.dirname(a.filePath))] || 0;
+        const bCurrentChunk = currentlyProcessingChunks[path.basename(path.dirname(b.filePath))] || 0;
+
+        const aIsPreferred = aParsed && aParsed.type === 'video' && aParsed.height === aPref && aParsed.index >= aCurrentChunk - 10 && aParsed.index < aCurrentChunk + 5;
+        const bIsPreferred = bParsed && bParsed.type === 'video' && bParsed.height === bPref && bParsed.index >= bCurrentChunk - 10 && bParsed.index < bCurrentChunk + 5;
 
         if (aIsPreferred && !bIsPreferred) return -1;
         if (!aIsPreferred && bIsPreferred) return 1;
+        if(aParsed.index >= aCurrentChunk - 10 && bParsed.index < bCurrentChunk - 10) return -1;
+        if(aParsed.index < aCurrentChunk - 10 && bParsed.index >= bCurrentChunk - 10) return 1;
         if (aParsed.index > bParsed.index) return 1;
         if (aParsed.index < bParsed.index) return -1;
         return 0;
@@ -396,41 +403,6 @@ function pruneQueueForQuality(dirPath, type, identifier, currentIndex, prefetchC
     }
 }
 
-const qualityRequestsHistory = {};
-const cachedPreferredQuality = {};
-
-// Clean up and compute preferred qualities periodically (every 10 seconds)
-setInterval(() => {
-    const now = Date.now();
-    for (const dirPath of Object.keys(qualityRequestsHistory)) {
-        // Prune history older than 5 minutes
-        qualityRequestsHistory[dirPath] = qualityRequestsHistory[dirPath].filter(
-            req => (now - req.timestamp) <= 5 * 60 * 1000
-        );
-
-        const history = qualityRequestsHistory[dirPath];
-        if (history && history.length > 0) {
-            const counts = {};
-            let maxCount = 0;
-            let preferred = null;
-
-            for (const req of history) {
-                counts[req.height] = (counts[req.height] || 0) + 1;
-                if (counts[req.height] > maxCount) {
-                    maxCount = counts[req.height];
-                    preferred = req.height;
-                }
-            }
-            if (cachedPreferredQuality[dirPath] !== preferred) {
-                console.log(`[Queue] Updated cached preferred quality for ${path.basename(dirPath)} to ${preferred}p`);
-                cachedPreferredQuality[dirPath] = preferred;
-            }
-        } else {
-            delete cachedPreferredQuality[dirPath];
-            delete qualityRequestsHistory[dirPath];
-        }
-    }
-}, 10000); // 10 seconds interval
 
 function recordQualityRequest(dirPath, height) {
     if (!qualityRequestsHistory[dirPath]) {
@@ -441,56 +413,6 @@ function recordQualityRequest(dirPath, height) {
     // Set immediate initial cache if not set yet
     if (cachedPreferredQuality[dirPath] === undefined) {
         cachedPreferredQuality[dirPath] = height;
-    }
-}
-
-function prunePriorChunks(filePath) {
-    const parsed = parseSegmentPath(filePath);
-    if (!parsed) return;
-
-    const dirPath = path.dirname(filePath);
-    const segTime = 12;
-
-    // Prune pending tasks in transcodeQueue
-    for (let i = transcodeQueue.length - 1; i >= 0; i--) {
-        const task = transcodeQueue[i];
-        if (path.dirname(task.filePath) === dirPath) {
-            const taskParsed = parseSegmentPath(task.filePath);
-            if (taskParsed && taskParsed.type === parsed.type) {
-                const taskSegTime = 12;
-                const timeDiff = (parsed.index - taskParsed.index) * taskSegTime;
-                if (timeDiff > 120) {
-                    transcodeQueue.splice(i, 1);
-                    delete activeTranscodes[task.filePath];
-                    if (task.reject) {
-                        task.reject(new Error(`Pruned: chunk more than 2 minutes prior to playback`));
-                    }
-                    console.log(`[Queue] Pruned pending prior chunk: ${path.basename(task.filePath)}`);
-                }
-            }
-        }
-    }
-
-    // Cancel active/running tasks that are more than 2 minutes prior
-    const runningTasks = Object.values(activeTranscodes);
-    for (const task of runningTasks) {
-        if (task.isRunning && path.dirname(task.filePath) === dirPath) {
-            const taskParsed = parseSegmentPath(task.filePath);
-            if (taskParsed && taskParsed.type === parsed.type) {
-                const taskSegTime = 12;
-                const timeDiff = (parsed.index - taskParsed.index) * taskSegTime;
-                if (timeDiff > 120) {
-                    console.log(`[Queue] Canceling active prior chunk: ${path.basename(task.filePath)}`);
-                    if (task.process) {
-                        try {
-                            task.process.kill('SIGKILL');
-                        } catch (err) {
-                            console.error(`Failed to kill process:`, err);
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -611,7 +533,8 @@ async function prepareSegmentOnTheFly(filePath, isHighPriority = true) {
         run: async () => {
             task.isRunning = true;
             try {
-                const message = `Transcoding ${path.basename(normalizedPath)} (priority: ${cachedPreferredQuality[path.dirname(normalizedPath)]}p)`;
+                const message = `Transcoding ${path.basename(normalizedPath)} (priority: ${cachedPreferredQuality[path.dirname(normalizedPath)]}p, currentIndex: ${currentlyProcessingChunks[path.basename(path.dirname(normalizedPath))]})`;
+                console.log(message);
                 axios.post('http://localhost:9090', { message }).catch(() => { });
                 await performTranscode(normalizedPath, (cmd) => {
                     task.process = cmd;
@@ -642,10 +565,6 @@ async function performTranscode(filePath, onCmdReady) {
 
     if (!fs.existsSync(metaPath)) {
         throw new Error(`Metadata file not found: ${metaPath}`);
-    }
-
-    if (fs.existsSync(path.join(__dirname, "streams", path.dirname(filePath), path.basename(filePath)))) {
-        return;
     }
 
     const metadata = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
@@ -790,11 +709,11 @@ app.use('/stream', async (req, res, next) => {
                 }
             }
         } else if (filePath.endsWith('.ts')) {
-            prunePriorChunks(filePath);
             const parsed = parseSegmentPath(filePath);
             if (parsed && parsed.type === 'video') {
                 recordQualityRequest(path.dirname(filePath), parsed.height);
             }
+            currentlyProcessingChunks[id] = parsed.index;
             res.setHeader('Content-Type', 'video/mp2t');
             if (!fs.existsSync(filePath)) {
                 try {
