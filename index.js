@@ -4,6 +4,9 @@ const https = require("https");
 const AdmZip = require("adm-zip");
 const os = require('os');
 const axios = require('axios');
+const path = require('path');
+
+const baseDir = process.pkg ? path.dirname(process.execPath) : __dirname;
 
 let nodePath = 'node';
 let npmPath = 'npm';
@@ -83,6 +86,7 @@ const prepareFailureMessage = (message) => {
 const executeCommand = (command, callback, failureMessage) => {
     exec(command, (error, stdout, stderr) => {
         if (error) {
+            console.log(error);
             prepareFailureMessage(failureMessage);
             return;
         }
@@ -97,7 +101,7 @@ const downloadNodeJs = async (callback) => {
         return;
     }
     const arch = getTrueArch();
-    const writer = fs.createWriteStream(`${__dirname}/node.zip`);
+    const writer = fs.createWriteStream(`${baseDir}/node.zip`);
     const response = await axios({
         url: `https://github.com/DevanshSampat/HLS-Video-Streaming/releases/download/git/nodejs-${platform}-${arch}.zip`,
         method: 'GET',
@@ -107,9 +111,9 @@ const downloadNodeJs = async (callback) => {
     // Pipe the data into the write stream
     response.data.pipe(writer);
     writer.on('finish', () => {
-        const zip = new AdmZip(`${__dirname}/node.zip`);
-        zip.extractAllTo(`${__dirname}/node`, true);
-        fs.unlinkSync(`${__dirname}/node.zip`);
+        const zip = new AdmZip(`${baseDir}/node.zip`);
+        zip.extractAllTo(`${baseDir}/node`, true);
+        fs.unlinkSync(`${baseDir}/node.zip`);
         callback();
     });
     writer.on('error', (err) => {
@@ -124,7 +128,7 @@ const downloadGit = async (callback) => {
         downloadWithHomebrew("git", callback);
         return;
     }
-    const writer = fs.createWriteStream(`${__dirname}/git.zip`);
+    const writer = fs.createWriteStream(`${baseDir}/git.zip`);
     const response = await axios({
         url: `https://github.com/DevanshSampat/HLS-Video-Streaming/releases/download/git/git-${platform}-${arch}.zip`,
         method: 'GET',
@@ -134,9 +138,9 @@ const downloadGit = async (callback) => {
     // Pipe the data into the write stream
     response.data.pipe(writer);
     writer.on('finish', () => {
-        const zip = new AdmZip(`${__dirname}/git.zip`);
-        zip.extractAllTo(`${__dirname}/git`, true);
-        fs.unlinkSync(`${__dirname}/git.zip`);
+        const zip = new AdmZip(`${baseDir}/git.zip`);
+        zip.extractAllTo(`${baseDir}/git`, true);
+        fs.unlinkSync(`${baseDir}/git.zip`);
         callback();
     });
     writer.on('error', (err) => {
@@ -152,7 +156,7 @@ const downloadFFmpeg = async (callback) => {
         return;
     }
     const arch = getTrueArch();
-    const writer = fs.createWriteStream(`${__dirname}/ffmpeg.zip`);
+    const writer = fs.createWriteStream(`${baseDir}/ffmpeg.zip`);
     const response = await axios({
         url: `https://github.com/DevanshSampat/HLS-Video-Streaming/releases/download/git/ffmpeg-${platform}-${arch}.zip`,
         method: 'GET',
@@ -160,9 +164,9 @@ const downloadFFmpeg = async (callback) => {
     });
     response.data.pipe(writer);
     writer.on('finish', () => {
-        const zip = new AdmZip(`${__dirname}/ffmpeg.zip`);
-        zip.extractAllTo(`${__dirname}/ffmpeg`, true);
-        fs.unlinkSync(`${__dirname}/ffmpeg.zip`);
+        const zip = new AdmZip(`${baseDir}/ffmpeg.zip`);
+        zip.extractAllTo(`${baseDir}/ffmpeg`, true);
+        fs.unlinkSync(`${baseDir}/ffmpeg.zip`);
         callback();
     });
     writer.on('error', (err) => {
@@ -173,7 +177,7 @@ const downloadFFmpeg = async (callback) => {
 const executeCommandWithFallbackFunction = (command, callback, failureMessage, fallbackFunction) => {
     exec(command, (error, stdout, stderr) => {
         if (error) {
-            console.log(failureMessage);
+            console.log(error);
             fallbackFunction();
             return;
         }
@@ -183,16 +187,18 @@ const executeCommandWithFallbackFunction = (command, callback, failureMessage, f
 
 
 const checkFFmpegVersion = () => {
-    if (fs.existsSync(`${__dirname}/ffmpeg`)) {
-        ffmpegPath = `"${__dirname}/ffmpeg/bin/ffmpeg"`;
-        fs.writeFileSync(`${__dirname}/ffmpeg_path.txt`, ffmpegPath, 'utf8');
+    if (fs.existsSync(`${baseDir}/ffmpeg`)) {
+        ffmpegPath = `"${baseDir}/ffmpeg/bin/ffmpeg"`;
+        fs.writeFileSync(`${baseDir}/ffmpeg_path.txt`, ffmpegPath, 'utf8');
         checkGitRepository();
         return;
     }
 
+    console.log("downloading ffmpeg")
+
     executeCommandWithFallbackFunction("ffmpeg -version", () => {
         checkGitRepository();
-    }, " -- SETTING UP --", () => {
+    }, " -- DOWNLOADING FFMPEG --", () => {
         downloadFFmpeg(() => {
             checkFFmpegVersion();
         });
@@ -200,18 +206,21 @@ const checkFFmpegVersion = () => {
 }
 
 const checkGitVersion = () => {
-    if (fs.existsSync(`${__dirname}/git`)) {
-        const gitFiles = fs.readdirSync(`${__dirname}/git`);
-        gitPath = `"${__dirname}/git/bin/git"`;
-        fs.writeFileSync(`${__dirname}/git_path.txt`, gitPath, 'utf8');
+    if (fs.existsSync(`${baseDir}/git`)) {
+        const gitFiles = fs.readdirSync(`${baseDir}/git`);
+        gitPath = `"${baseDir}/git/bin/git"`;
+        fs.writeFileSync(`${baseDir}/git_path.txt`, gitPath, 'utf8');
         checkFFmpegVersion();
         return;
     }
+
+    console.log("downloading git")
+
     executeCommandWithFallbackFunction("git --version", () => {
         gitPath = "git";
-        fs.writeFileSync(`${__dirname}/git_path.txt`, gitPath, 'utf8');
+        fs.writeFileSync(`${baseDir}/git_path.txt`, gitPath, 'utf8');
         checkFFmpegVersion();
-    }, " -- SETTING UP --", () => {
+    }, " -- DOWNLOADING GIT --", () => {
         downloadGit(() => {
             checkGitVersion();
         });
@@ -219,20 +228,31 @@ const checkGitVersion = () => {
 }
 
 const checkNodeVersion = () => {
-    if (fs.existsSync(`${__dirname}/node`)) {
-        const nodeFiles = fs.readdirSync(`${__dirname}/node`);
-        nodePath = `"${__dirname}/node/${nodeFiles[0]}/node"`;
-        npmPath = `"${__dirname}/node/${nodeFiles[0]}/npm"`;
-        fs.writeFileSync(`${__dirname}/node_path.txt`, nodePath, 'utf8');
+    if (fs.existsSync(`${baseDir}/node`)) {
+        const nodeFiles = fs.readdirSync(`${baseDir}/node`);
+        nodePath = `"${baseDir}/node/${nodeFiles[0]}/node"`;
+        npmPath = `"${baseDir}/node/${nodeFiles[0]}/npm"`;
+        fs.writeFileSync(`${baseDir}/node_path.txt`, nodePath, 'utf8');
         checkGitVersion();
         return;
     }
+
+    if(getPlatform() === "mac") {
+        nodePath = "node";
+        npmPath = "npm";
+        fs.writeFileSync(`${baseDir}/node_path.txt`, nodePath, 'utf8');
+        checkGitVersion();
+        return;
+    }
+
+    console.log("downloading nodejs")
+    
     executeCommandWithFallbackFunction("node --version", () => {
         nodePath = "node";
         npmPath = "npm";
-        fs.writeFileSync(`${__dirname}/node_path.txt`, nodePath, 'utf8');
+        fs.writeFileSync(`${baseDir}/node_path.txt`, nodePath, 'utf8');
         checkGitVersion();
-    }, " -- SETTING UP --", () => {
+    }, " -- DOWNLOADING NODEJS --", () => {
         downloadNodeJs(() => {
             checkNodeVersion();
         });
@@ -241,10 +261,10 @@ const checkNodeVersion = () => {
 
 
 const checkGitRepository = () => {
-    if (fs.existsSync(`${__dirname}/streamer`)) {
+    if (fs.existsSync(`${baseDir}/streamer`)) {
         startServer();
     } else {
-        exec(`${gitPath} clone https://github.com/DevanshSampat/HLS-Video-Streaming.git "${__dirname}/streamer"`, (error, stdout, stderr) => {
+        exec(`${gitPath} clone https://github.com/DevanshSampat/HLS-Video-Streaming.git "${baseDir}/streamer"`, (error, stdout, stderr) => {
             if (error) {
                 prepareFailureMessage("Failed to clone the Git repository.");
             } else {
@@ -256,11 +276,11 @@ const checkGitRepository = () => {
 
 const startServer = () => {
     console.log("Starting server...");
-    if (fs.existsSync(`${__dirname}/path.txt`)) {
-        fs.writeFileSync(`${__dirname}/streamer/path.txt`, fs.readFileSync(`${__dirname}/path.txt`, 'utf8'), 'utf8');
-        fs.unlinkSync(`${__dirname}/path.txt`);
+    if (fs.existsSync(`${baseDir}/path.txt`)) {
+        fs.writeFileSync(`${baseDir}/streamer/path.txt`, fs.readFileSync(`${baseDir}/path.txt`, 'utf8'), 'utf8');
+        fs.unlinkSync(`${baseDir}/path.txt`);
     }
-    executeCommandWithConsoleLogging(`cd "${__dirname}/streamer" && ${gitPath} pull && ${npmPath} install && ${nodePath} server.js`);
+    executeCommandWithConsoleLogging(`cd "${baseDir}/streamer" && ${gitPath} pull && ${npmPath} install && ${nodePath} server.js`);
 }
 
 

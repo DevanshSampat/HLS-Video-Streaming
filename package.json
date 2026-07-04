@@ -7,7 +7,9 @@
     "start": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "build:windows": "nvm use 20.10.0 && nexe ./  -o ./streamvilla-localhost.exe --build --verbose && nvm use 24.13.1 arm64",
-    "build:mac": "npx pkg index.js --targets node18-macos-x64 --output streamvilla-mac"
+    "build:mac:arm64": "npx pkg index.js --targets node18-macos-arm64 --output streamvilla-mac-arm64",
+    "build:mac:x64": "npx pkg index.js --targets node18-macos-x64 --output streamvilla-mac-x64",
+    "build:mac": "npm run build:mac:arm64 && npm run build:mac:x64"
   },
   "author": "",
   "license": "ISC",

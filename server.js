@@ -1038,12 +1038,12 @@ const bringTailscaleUp = () => {
         }
         const lines = stdout.split('\n');
         for (let i = 0; i < lines.length; i++) {
-            if (lines[i].toLowerCase().includes(os.hostname().toLowerCase())) {
+            if (lines[i].toLowerCase().includes(os.hostname().toLowerCase().split(".")[0])) {
                 exec("tailscale dns status", (error, stdout, stderr) => {
                     const searchDomainString = stdout.substring(stdout.indexOf("Search Domains:") + 16);
                     let domain = searchDomainString.substring(searchDomainString.indexOf("- ") + 2);
                     domain = domain.substring(0, domain.indexOf("\n"));
-                    const url = `https://${os.hostname().toLowerCase()}.${domain.trim()}`
+                    const url = `https://${os.hostname().toLowerCase().split(".")[0]}.${domain.trim()}`
                     if (globalUrl !== url) {
                         globalUrl = url;
                         console.log(`🌐 Tailscale URL: ${url}`);
