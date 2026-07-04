@@ -91,15 +91,13 @@ const executeCommand = (command, callback, failureMessage) => {
 }
 
 const downloadNodeJs = async (callback) => {
-    const arch = getTrueArch();
     const platform = getPlatform().toLowerCase();
-    const writer = fs.createWriteStream(`${__dirname}/node.zip`);
-
     if(platform === "mac") {
         downloadWithHomebrew("node", callback);
         return;
     }
-
+    const arch = getTrueArch();
+    const writer = fs.createWriteStream(`${__dirname}/node.zip`);
     const response = await axios({
         url: `https://github.com/DevanshSampat/HLS-Video-Streaming/releases/download/git/nodejs-${platform}-${arch}.zip`,
         method: 'GET',
@@ -120,15 +118,13 @@ const downloadNodeJs = async (callback) => {
 }
 
 const downloadGit = async (callback) => {
-    const arch = getTrueArch();
     const platform = getPlatform().toLowerCase();
-    const writer = fs.createWriteStream(`${__dirname}/git.zip`);
-
+    const arch = getTrueArch();
     if(platform === "mac") {
         downloadWithHomebrew("git", callback);
         return;
     }
-
+    const writer = fs.createWriteStream(`${__dirname}/git.zip`);
     const response = await axios({
         url: `https://github.com/DevanshSampat/HLS-Video-Streaming/releases/download/git/git-${platform}-${arch}.zip`,
         method: 'GET',
@@ -150,15 +146,13 @@ const downloadGit = async (callback) => {
 
 
 const downloadFFmpeg = async (callback) => {
-    const arch = getTrueArch();
     const platform = getPlatform().toLowerCase();
-    const writer = fs.createWriteStream(`${__dirname}/ffmpeg.zip`);
-
     if(platform === "mac") {
         downloadWithHomebrew("ffmpeg", callback);
         return;
     }
-
+    const arch = getTrueArch();
+    const writer = fs.createWriteStream(`${__dirname}/ffmpeg.zip`);
     const response = await axios({
         url: `https://github.com/DevanshSampat/HLS-Video-Streaming/releases/download/git/ffmpeg-${platform}-${arch}.zip`,
         method: 'GET',
