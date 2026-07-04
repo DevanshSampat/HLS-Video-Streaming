@@ -969,7 +969,7 @@ app.get("/watch-details", (req, res) => {
 });
 
 app.get("/device-name", (req, res) => {
-    res.json({ name: os.hostname(), url: globalUrl });
+    res.json({ name: os.hostname().split('.')[0], url: globalUrl });
 });
 
 app.post("/stop", (req, res) => {
