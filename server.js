@@ -134,8 +134,16 @@ const getFolderPathToCastVideos = () => {
     if (fs.existsSync(path.join(__dirname, 'path.txt'))) {
         return fs.readFileSync(path.join(__dirname, 'path.txt'), 'utf8').replaceAll('\\', '/');
     }
-    // This single-line command prevents "MissingEndCurlyBrace" errors
-    const cmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = 'Select Video Folder'; if($f.ShowDialog() -eq 'OK') { $f.SelectedPath }"`;
+
+    let cmd = '';
+    if (process.platform === 'win32') {
+        cmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = 'Select Video Folder'; if($f.ShowDialog() -eq 'OK') { $f.SelectedPath }"`;
+    } else if (process.platform === 'darwin') {
+        cmd = `osascript -e 'POSIX path of (choose folder with prompt "Select Video Folder")'`;
+    } else {
+        console.error("Folder picker is not supported on this platform.");
+        return null;
+    }
 
     try {
         const result = execSync(cmd, { encoding: 'utf8' }).trim();
@@ -976,7 +984,7 @@ app.listen(PORT, async () => {
     localIpAddress = "no address";
     let { WiFi } = os.networkInterfaces();
     if (!WiFi) {
-        WiFi = os.networkInterfaces()["Wi-Fi"];
+        WiFi = os.networkInterfaces()["Wi-Fi"] || os.networkInterfaces()["en0"];
     }
     if (WiFi == undefined) {
         console.log("please connect to WiFi");

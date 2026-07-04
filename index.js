@@ -37,6 +37,41 @@ function getTrueWindowsArch() {
     }
 }
 
+function downloadWithHomebrew(tool, callback) {
+    executeCommandWithFallbackFunction("brew --version", () => {
+        const command = `HOMEBREW_NO_AUTO_UPDATE=1 yes | brew install ${tool}`;
+        executeCommand(command, callback, `Failed to install ${tool}. Please install it manually and try again.`);
+    }, " -- SETTING UP --", () => {
+        prepareFailureMessage("homebrew not found");
+    });
+}
+
+function getTrueMacArch() {
+    try {
+        const isTranslated = execSync('sysctl -in sysctl.proc_translated').toString().trim() === '1';
+        if (isTranslated) return 'arm64';
+        const hasArmCpu = execSync('sysctl -in hw.optional.arm64').toString().trim() === '1';
+        if (hasArmCpu) return 'arm64';
+    } catch (e) {}
+
+    const arch = execSync('uname -m').toString().trim();
+    if (arch === 'arm64') return 'arm64';
+    if (arch === 'x86_64') return 'x64';
+    return 'x64';
+}
+
+function getTrueArch(){
+    if(process.platform === 'win32') return getTrueWindowsArch().toLowerCase() === 'arm64' ? 'arm64' : 'x64';
+    if(process.platform === 'darwin') return getTrueMacArch();
+    return process.arch;
+}
+
+function getPlatform() {
+    if(process.platform === 'win32') return 'windows';
+    if(process.platform === 'darwin') return 'mac';
+    return 'linux';
+}
+
 
 const prepareFailureMessage = (message) => {
     console.log(message);
@@ -55,32 +90,47 @@ const executeCommand = (command, callback, failureMessage) => {
     });
 }
 
-const downloadNodeJs = (callback) => {
-    const arch = getTrueWindowsArch().toLowerCase() === 'arm64' ? 'arm64' : 'x64';
-    const request = https.get(
-        `https://streamvilla-fcm.onrender.com/nodejs/${arch}`,
-        function (response) {
-            const file = fs.createWriteStream(__dirname + "/node.zip");
-            response.pipe(file);
+const downloadNodeJs = async (callback) => {
+    const arch = getTrueArch();
+    const platform = getPlatform().toLowerCase();
+    const writer = fs.createWriteStream(`${__dirname}/node.zip`);
 
-            // after download completed close fileStream
-            file.on("finish", () => {
-                file.close();
-                const zip = new AdmZip(__dirname + "/node.zip");
-                zip.extractAllTo(__dirname + "/node", true);
-                fs.unlinkSync(__dirname + "/node.zip");
-                callback();
-            });
-        }
-    );
+    if(platform === "mac") {
+        downloadWithHomebrew("node", callback);
+        return;
+    }
+
+    const response = await axios({
+        url: `https://github.com/DevanshSampat/HLS-Video-Streaming/releases/download/git/nodejs-${platform}-${arch}.zip`,
+        method: 'GET',
+        responseType: 'stream', // Important for Node.js downloads
+    });
+
+    // Pipe the data into the write stream
+    response.data.pipe(writer);
+    writer.on('finish', () => {
+        const zip = new AdmZip(`${__dirname}/node.zip`);
+        zip.extractAllTo(`${__dirname}/node`, true);
+        fs.unlinkSync(`${__dirname}/node.zip`);
+        callback();
+    });
+    writer.on('error', (err) => {
+        prepareFailureMessage("Please check your internet connection and try again.");
+    });
 }
 
 const downloadGit = async (callback) => {
-    const arch = getTrueWindowsArch().toLowerCase() === 'arm64' ? 'arm64' : 'x64';
+    const arch = getTrueArch();
+    const platform = getPlatform().toLowerCase();
     const writer = fs.createWriteStream(`${__dirname}/git.zip`);
 
+    if(platform === "mac") {
+        downloadWithHomebrew("git", callback);
+        return;
+    }
+
     const response = await axios({
-        url: `https://github.com/DevanshSampat/HLS-Video-Streaming/releases/download/git/git-${arch}.zip`,
+        url: `https://github.com/DevanshSampat/HLS-Video-Streaming/releases/download/git/git-${platform}-${arch}.zip`,
         method: 'GET',
         responseType: 'stream', // Important for Node.js downloads
     });
@@ -100,10 +150,17 @@ const downloadGit = async (callback) => {
 
 
 const downloadFFmpeg = async (callback) => {
-    const arch = getTrueWindowsArch().toLowerCase() === 'arm64' ? 'arm64' : 'x64';
+    const arch = getTrueArch();
+    const platform = getPlatform().toLowerCase();
     const writer = fs.createWriteStream(`${__dirname}/ffmpeg.zip`);
+
+    if(platform === "mac") {
+        downloadWithHomebrew("ffmpeg", callback);
+        return;
+    }
+
     const response = await axios({
-        url: `https://github.com/DevanshSampat/HLS-Video-Streaming/releases/download/git/ffmpeg-${arch}.zip`,
+        url: `https://github.com/DevanshSampat/HLS-Video-Streaming/releases/download/git/ffmpeg-${platform}-${arch}.zip`,
         method: 'GET',
         responseType: 'stream', // Important for Node.js downloads
     });
@@ -138,6 +195,7 @@ const checkFFmpegVersion = () => {
         checkGitRepository();
         return;
     }
+
     executeCommandWithFallbackFunction("ffmpeg -version", () => {
         checkGitRepository();
     }, " -- SETTING UP --", () => {
