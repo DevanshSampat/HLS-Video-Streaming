@@ -22,17 +22,6 @@ if (fs.existsSync(path.join(__dirname, 'userPreferences.json'))) {
     streamLocally = JSON.parse(fs.readFileSync(path.join(__dirname, 'userPreferences.json'), 'utf8')).streamLocally;
 }
 
-const pixelToMapPriority = {
-    "144p": 1,
-    "240p": 1,
-    "360p": 1,
-    "480p": 1,
-    "720p": 1,
-    "1080p": 1,
-    "1440p": 1,
-    "2160p": 1
-}
-
 const deleteFolderRecursive = (dirPath) => {
     if (fs.existsSync(dirPath)) {
         fs.readdirSync(dirPath).forEach(function (file) {
@@ -762,9 +751,8 @@ app.get("/videos", (req, res) => {
     if (fs.existsSync(path.join(__dirname, 'userPreferences.json'))) {
         const userPreferences = JSON.parse(fs.readFileSync(path.join(__dirname, 'userPreferences.json'), 'utf8'));
         streamSingleQualityRemotely = userPreferences.streamSingleQualityRemotely || false;
-        if (userPreferences.streamSingleQualityLocally !== undefined) {
-            streamSingleQualityLocally = userPreferences.streamSingleQualityLocally;
-        }
+        streamSingleQualityLocally = userPreferences.streamSingleQualityLocally || true;
+
     }
     try {
         const tailscaleStatus = execSync('tailscale ping ' + ip, { encoding: 'utf8' });
@@ -791,7 +779,7 @@ app.get("/videos", (req, res) => {
         const fileName = path.basename(filePath);
         response.push({
             name: fileName,
-            path: (!req.query.forceMultiQuality && ((isDirectConnection && streamSingleQualityLocally) || (!isDirectConnection && streamSingleQualityRemotely))) ? key : `streams/${key}/master.m3u8`,
+            path: `streams/${key}/master.m3u8${(isDirectConnection && streamSingleQualityLocally) ? "?maxQuality=2160" : ""}`,
             subtitle: true,
         });
     }
