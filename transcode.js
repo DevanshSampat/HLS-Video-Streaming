@@ -136,7 +136,8 @@ function updateMasterPlaylist(activeQualities, audioTracks) {
 
     let master = '#EXTM3U\n#EXT-X-VERSION:3\n';
     audioTracks.forEach((t, i) => {
-        master += `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="stereo",LANGUAGE="${t.lang}",NAME="${t.name}",DEFAULT=${i === 0 ? 'YES' : 'NO'},AUTOSELECT=YES,URI="${t.id}.m3u8"\n`;
+        const displayName = t.name && t.lang && t.lang !== 'und' && !t.name.toLowerCase().includes(t.lang.toLowerCase()) ? `${t.name} (${t.lang})` : t.name;
+        master += `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="stereo",LANGUAGE="${t.lang}",NAME="${displayName}",DEFAULT=${i === 0 ? 'YES' : 'NO'},AUTOSELECT=YES,URI="${t.id}.m3u8"\n`;
     });
 
     [...activeQualities].sort((a, b) => {
@@ -209,7 +210,7 @@ async function main() {
         }
         const audioTracks = aStreams.map((s, i) => ({
             index: s.index, id: `audio_${i}`,
-            lang: s.tags?.language || 'und', name: s.tags?.title || s.tags?.language || `Track ${i + 1}`
+            lang: s.tags?.language || s.tags?.LANGUAGE || 'und', name: s.tags?.title || s.tags?.language || `Track ${i + 1}`
         }));
 
         const args = process.argv.slice(2);
@@ -234,7 +235,7 @@ async function main() {
                     break;
                 }
             }
-        }    
+        }
         // Move prioritized quality to the front
         if (prioritizedQualityIndex > 0) {
             const [pq] = validQualities.splice(prioritizedQualityIndex, 1);
@@ -315,7 +316,7 @@ const waitForCurrentQualitiesToFinish = (currentSelectedQuality, qualities, call
     const approximateProcessedQualitySize = videoFileSize * (currentSelectedQuality.height / maxQuality.height);
     let currentlyProcessingSize = 0;
     for (const q of qualities) {
-        if(q.height === currentSelectedQuality.height) break;
+        if (q.height === currentSelectedQuality.height) break;
         if ((processingProgress[q.height] || 0) < 100) {
             currentlyProcessingSize += (videoFileSize * (q.height / maxQuality.height));
         }
@@ -332,7 +333,7 @@ const waitForCurrentQualitiesToFinish = (currentSelectedQuality, qualities, call
 }
 
 const updateCurrentQualityOnProcessingFile = (quality, allQualities, timeMark, metadata) => {
-    if(fs.existsSync(`${__dirname}/stop_processing.txt`)) {
+    if (fs.existsSync(`${__dirname}/stop_processing.txt`)) {
         axios.post('http://localhost:9090', { message: '' }).catch(() => { });
         fs.unlinkSync(`${__dirname}/stop_processing.txt`);
         fs.unlinkSync(`${__dirname}/isProcessing.txt`);

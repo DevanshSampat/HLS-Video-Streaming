@@ -254,7 +254,7 @@ async function prepareAllM3u8Files() {
             const audioTracks = aStreams.map((s, i) => ({
                 index: s.index,
                 id: `audio_${i}`,
-                lang: s.tags?.language || 'und',
+                lang: s.tags?.language || s.tags?.LANGUAGE || 'und',
                 name: s.tags?.title || s.tags?.language || `Track ${i + 1}`
             }));
 
@@ -272,7 +272,8 @@ async function prepareAllM3u8Files() {
             // Write master.m3u8
             let masterContent = '#EXTM3U\n#EXT-X-VERSION:3\n';
             audioTracks.forEach((t, i) => {
-                masterContent += `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="stereo",LANGUAGE="${t.lang}",NAME="${t.name}",DEFAULT=${i === 0 ? 'YES' : 'NO'},AUTOSELECT=YES,URI="${t.id}.m3u8"\n`;
+                const displayName = t.name && t.lang && t.lang !== 'und' && !t.name.toLowerCase().includes(t.lang.toLowerCase()) ? `${t.name} (${t.lang})` : t.name;
+                masterContent += `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="stereo",LANGUAGE="${t.lang}",NAME="${displayName}",DEFAULT=${i === 0 ? 'YES' : 'NO'},AUTOSELECT=YES,URI="${t.id}.m3u8"\n`;
             });
 
             [...validQualities].sort((a, b) => a.height - b.height).forEach(q => {
