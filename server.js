@@ -749,10 +749,12 @@ app.get("/videos", (req, res) => {
     let isDirectConnection = true;
     let streamSingleQualityRemotely = false;
     let streamSingleQualityLocally = true;
+    let forceStreamSingleQuality = false;
     if (fs.existsSync(path.join(__dirname, 'userPreferences.json'))) {
         const userPreferences = JSON.parse(fs.readFileSync(path.join(__dirname, 'userPreferences.json'), 'utf8'));
         streamSingleQualityRemotely = userPreferences.streamSingleQualityRemotely || false;
         streamSingleQualityLocally = userPreferences.streamSingleQualityLocally ?? true;
+        forceStreamSingleQuality = userPreferences.forceStreamSingleQuality || false;
     }
     try {
         const tailscaleStatus = execSync('tailscale ping ' + ip, { encoding: 'utf8' });
@@ -779,7 +781,7 @@ app.get("/videos", (req, res) => {
         const fileName = path.basename(filePath);
         response.push({
             name: fileName,
-            path: `streams/${key}/master.m3u8${(!req.query.forceMultiQuality && isDirectConnection && streamSingleQualityLocally) ? "?maxQuality=2160" : ""}`,
+            path: forceStreamSingleQuality ? key : `streams/${key}/master.m3u8${(!req.query.forceMultiQuality && isDirectConnection && streamSingleQualityLocally) ? "?maxQuality=2160" : ""}`,
             subtitle: true,
         });
     }
