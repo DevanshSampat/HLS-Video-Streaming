@@ -906,7 +906,7 @@ app.post("/watch-details", (req, res) => {
             dataToPut[body.videoId.replaceAll("streams/", "").replaceAll("master.m3u8", "").replaceAll("/", "")] = body.dataToPut;
             fs.writeFileSync(
                 `${__dirname}/user_watch_data/${body.firebaseUid}.json`,
-                JSON.stringify(dataToPut)
+                JSON.stringify(dataToPut, null, 2)
             );
             res.statusCode = 200;
             res.contentType = "application/json";
