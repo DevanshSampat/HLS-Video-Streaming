@@ -903,7 +903,7 @@ app.post("/watch-details", (req, res) => {
             if (data) {
                 dataToPut = JSON.parse(data.toString());
             }
-            dataToPut[body.videoId.replaceAll("streams/", "").replaceAll("master.m3u8", "").replaceAll("/", "")] = body.dataToPut;
+            dataToPut[body.videoId.replaceAll("streams/", "").replaceAll("master.m3u8", "").replaceAll("/", "").split("?")[0]] = body.dataToPut;
             fs.writeFileSync(
                 `${__dirname}/user_watch_data/${body.firebaseUid}.json`,
                 JSON.stringify(dataToPut, null, 2)
@@ -944,7 +944,7 @@ app.get("/watch-details", (req, res) => {
             if (data) {
                 dataToGet = JSON.parse(data.toString());
             }
-            const videoId = body.videoId.replaceAll("streams/", "").replaceAll("master.m3u8", "").replaceAll("/", "");
+            const videoId = body.videoId.replaceAll("streams/", "").replaceAll("master.m3u8", "").replaceAll("/", "").split("?")[0];
             if (!dataToGet[videoId]) {
                 dataToGet[videoId] = "0\t1";
             }
