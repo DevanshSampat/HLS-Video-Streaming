@@ -799,14 +799,14 @@ app.get("/videos", (req, res) => {
             subtitle: true,
         });
     }
+    response.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
     if (isCameraFeedAvailable) {
-        response.push({
-            name: "Live Camera Feed",
+        response.unshift({
+            name: "CCTV feed",
             path: "camera/stream.m3u8",
             subtitle: false,
         });
     }
-    response.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
     res.send(response);
 });
 
