@@ -16,6 +16,7 @@ let lastRequestTime = {};
 const deletionInterval = 5 * 60 * 1000;
 const currentlyProcessingChunks = {};
 const cachedPreferredQuality = {};
+let isCameraFeedAvailable = false;
 
 let streamLocally = false;
 if (fs.existsSync(path.join(__dirname, 'userPreferences.json'))) {
@@ -644,7 +645,20 @@ async function performTranscode(filePath, onCmdReady) {
 // Middleware to set correct headers for HLS files and transcode segments on the fly
 app.use('/stream', async (req, res, next) => {
     let id = req.path;
-    if (id.includes("streams/")) {
+    if (id.includes("camera/")) {
+        const streamPath = id.substring(id.indexOf("camera/") + 7);
+        try {
+            const response = await axios.get(`http://localhost:5001/hls/${streamPath}`, { responseType: 'stream' });
+            if (response.headers['content-type']) {
+                res.setHeader('Content-Type', response.headers['content-type']);
+            }
+            res.status(response.status);
+            return response.data.pipe(res);
+        } catch (err) {
+            return res.status(err.response?.status || 500).send(err.message);
+        }
+    }
+    else if (id.includes("streams/")) {
         id = id.substring(id.lastIndexOf("streams/") + 8);
         id = id.substring(0, id.lastIndexOf('/'));
     }
@@ -783,6 +797,13 @@ app.get("/videos", (req, res) => {
             name: fileName,
             path: forceStreamSingleQuality ? key : `streams/${key}/master.m3u8${(!req.query.forceMultiQuality && isDirectConnection && streamSingleQualityLocally) ? "?maxQuality=2160" : ""}`,
             subtitle: true,
+        });
+    }
+    if (isCameraFeedAvailable) {
+        response.push({
+            name: "Live Camera Feed",
+            path: "camera/stream.m3u8",
+            subtitle: false,
         });
     }
     response.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
@@ -970,6 +991,9 @@ app.post("/stop", (req, res) => {
     });
 });
 app.listen(PORT, async () => {
+    axios.get('http://localhost:5001').then((res) => {
+        isCameraFeedAvailable = true;
+    }).catch(e => {});
     if (fs.existsSync(path.join(__dirname, 'isProcessing.txt'))) fs.unlinkSync(path.join(__dirname, 'isProcessing.txt'));
     localIpAddress = "no address";
     let { WiFi } = os.networkInterfaces();
