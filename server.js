@@ -17,6 +17,30 @@ const deletionInterval = 5 * 60 * 1000;
 const currentlyProcessingChunks = {};
 const cachedPreferredQuality = {};
 let isCameraFeedAvailable = false;
+let recordingsFetchingInterval = 60000;
+let cachedRecordings = [];
+
+const fetchRecordingsPeriodically = async () => {
+    try {
+        const backendRes = await axios.get("http://localhost:5001/api/recordings");
+        if (backendRes.data && backendRes.data.recordings) {
+            cachedRecordings = backendRes.data.recordings.map(rec => ({
+                name: rec.filename,
+                path: `recordings/stream/${rec.filename}`,
+                downloadPath: `recordings/download?id=${rec.filename}`,
+                sizeMB: rec.sizeMB,
+                modifiedAt: rec.modifiedAt,
+                isRecording: true,
+                subtitle: false,
+            })).sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+        }
+    } catch (err) {
+        
+    }
+};
+
+fetchRecordingsPeriodically();
+setInterval(fetchRecordingsPeriodically, recordingsFetchingInterval);
 
 let streamLocally = false;
 if (fs.existsSync(path.join(__dirname, 'userPreferences.json'))) {
@@ -658,6 +682,44 @@ app.use('/stream', async (req, res, next) => {
             return res.status(err.response?.status || 500).send(err.message);
         }
     }
+    else if (id.includes("recordings/")) {
+        const recSubPath = id.substring(id.indexOf("recordings/") + 11);
+        try {
+            const response = await axios.get(`http://localhost:5001/api/recordings/stream/${recSubPath}`, {
+                responseType: 'stream',
+                headers: req.headers.range ? { range: req.headers.range } : {},
+                params: req.query
+            });
+            if (response.headers['content-type']) {
+                res.setHeader('Content-Type', response.headers['content-type']);
+            }
+            if (response.headers['content-disposition']) {
+                res.setHeader('Content-Disposition', response.headers['content-disposition']);
+            }
+            if (response.headers['content-range']) {
+                res.setHeader('Content-Range', response.headers['content-range']);
+            }
+            if (response.headers['accept-ranges']) {
+                res.setHeader('Accept-Ranges', response.headers['accept-ranges']);
+            }
+            if (response.headers['content-length']) {
+                res.setHeader('Content-Length', response.headers['content-length']);
+            }
+            res.status(response.status);
+            return response.data.pipe(res);
+        } catch (err) {
+            const filename = path.basename(recSubPath.split('?')[0]);
+            const localRecPath = path.join(__dirname, '../onvif-backend/recordings', filename);
+            if (fs.existsSync(localRecPath)) {
+                if (recSubPath.includes('download')) {
+                    return res.download(localRecPath, filename);
+                } else {
+                    return res.sendFile(localRecPath);
+                }
+            }
+            return res.status(err.response?.status || 404).send("Recording file not found");
+        }
+    }
     else if (id.includes("streams/")) {
         id = id.substring(id.lastIndexOf("streams/") + 8);
         id = id.substring(0, id.lastIndexOf('/'));
@@ -800,6 +862,19 @@ app.get("/videos", (req, res) => {
         });
     }
     response.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+
+    // Append periodic recordings stored in separate variable cachedRecordings
+    for (const rec of cachedRecordings) {
+        response.unshift({
+            name: rec.name,
+            path: rec.path,
+            downloadPath: rec.downloadPath,
+            sizeMB: rec.sizeMB,
+            modifiedAt: rec.modifiedAt,
+            isRecording: true,
+            subtitle: false,
+        });
+    }
     if (isCameraFeedAvailable) {
         response.unshift({
             name: "CCTV feed",
@@ -809,6 +884,76 @@ app.get("/videos", (req, res) => {
     }
     res.send(response);
 });
+
+// Recordings Endpoint - Keep recordings separate from video indices
+app.get("/recordings", async (req, res) => {
+    if (cachedRecordings && cachedRecordings.length > 0) {
+        return res.json({ success: true, count: cachedRecordings.length, recordings: cachedRecordings });
+    }
+    try {
+        const backendRes = await axios.get("http://localhost:5001/api/recordings");
+        return res.json(backendRes.data);
+    } catch (err) {
+        const recordingsDir = path.join(__dirname, "../onvif-backend/recordings");
+        if (fs.existsSync(recordingsDir)) {
+            const files = fs.readdirSync(recordingsDir).filter(f => f.endsWith('.mp4'));
+            const recordings = files.map(file => {
+                const stats = fs.statSync(path.join(recordingsDir, file));
+                return {
+                    filename: file,
+                    sizeBytes: stats.size,
+                    sizeMB: (stats.size / (1024 * 1024)).toFixed(2),
+                    createdAt: stats.birthtime || stats.mtime,
+                    modifiedAt: stats.mtime,
+                    downloadUrl: `/recordings/download?id=${file}`,
+                    streamUrl: `/recordings/${file}`,
+                };
+            }).sort((a, b) => b.modifiedAt - a.modifiedAt);
+            return res.json({ success: true, count: recordings.length, recordings });
+        }
+        res.status(500).json({ success: false, error: "Recordings unavailable: " + err.message });
+    }
+});
+
+const handleServerDownloadRecording = async (req, res) => {
+    const filenameParam = req.query.id || req.query.filename || req.params.filename;
+    if (!filenameParam) {
+        return res.status(400).json({ success: false, error: "id query parameter is required" });
+    }
+    const filename = path.basename(filenameParam);
+    try {
+        const response = await axios.get(`http://localhost:5001/api/recordings/download?id=${filename}`, { responseType: 'stream' });
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        response.data.pipe(res);
+    } catch (err) {
+        res.status(404).json({ success: false, error: "Recording file not found" });
+    }
+};
+
+app.get("/recordings/download", handleServerDownloadRecording);
+app.get("/recordings/download/:filename", handleServerDownloadRecording);
+
+const handleServerStreamRecording = async (req, res) => {
+    const filenameParam = req.params.filename || req.query.id || req.query.filename;
+    if (!filenameParam) {
+        return res.status(400).json({ success: false, error: "id query parameter or filename path is required" });
+    }
+    const filename = path.basename(filenameParam);
+    const recordingsDir = path.join(__dirname, "../onvif-backend/recordings");
+    const filePath = path.join(recordingsDir, filename);
+    if (fs.existsSync(filePath)) {
+        return res.sendFile(filePath);
+    }
+    try {
+        const response = await axios.get(`http://localhost:5001/api/recordings/stream/${filename}`, { responseType: 'stream' });
+        response.data.pipe(res);
+    } catch (err) {
+        res.status(404).json({ success: false, error: "Recording file not found" });
+    }
+};
+
+app.get("/recordings/stream/:filename", handleServerStreamRecording);
+app.get("/recordings/stream", handleServerStreamRecording);
 
 app.get("/stop-processing", (req, res) => {
     if (fs.existsSync(`${__dirname}/isProcessing.txt`)) {
@@ -847,6 +992,9 @@ app.get("/progress", (req, res) => {
 
 app.get(`/download`, (req, res) => {
     let filePath = decodeURIComponent(req.query.id);
+    if(filePath.includes("recordings/")) {
+        return handleServerDownloadRecording(req, res);
+    }
     if (filePath.includes('streams/')) filePath = filePath.substring(filePath.indexOf('streams/') + 8);
     if (filePath.includes('/master.m3u8')) filePath = filePath.substring(0, filePath.lastIndexOf('/'));
     filePath = filePath.replaceAll('\\', '').replaceAll('/', '');
@@ -993,7 +1141,7 @@ app.post("/stop", (req, res) => {
 app.listen(PORT, async () => {
     axios.get('http://localhost:5001').then((res) => {
         isCameraFeedAvailable = true;
-    }).catch(e => {});
+    }).catch(e => { });
     if (fs.existsSync(path.join(__dirname, 'isProcessing.txt'))) fs.unlinkSync(path.join(__dirname, 'isProcessing.txt'));
     localIpAddress = "no address";
     let { WiFi } = os.networkInterfaces();
