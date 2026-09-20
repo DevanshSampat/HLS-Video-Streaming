@@ -955,6 +955,35 @@ const handleServerStreamRecording = async (req, res) => {
 app.get("/recordings/stream/:filename", handleServerStreamRecording);
 app.get("/recordings/stream", handleServerStreamRecording);
 
+// Alert History & Alert Image Endpoints
+app.get("/alerts", async (req, res) => {
+    try {
+        const backendRes = await axios.get("http://localhost:5001/api/alerts");
+        return res.json(backendRes.data);
+    } catch (err) {
+        res.status(500).json({ success: false, error: "Alerts unavailable: " + err.message });
+    }
+});
+
+const handleServerDownloadAlertImage = async (req, res) => {
+    const filenameParam = req.query.id || req.query.filename || req.params.filename;
+    if (!filenameParam) {
+        return res.status(400).json({ success: false, error: "id or filename parameter is required" });
+    }
+    const filename = path.basename(filenameParam);
+    try {
+        const response = await axios.get(`http://localhost:5001/api/alerts/download?id=${filename}`, { responseType: 'stream' });
+        response.data.pipe(res);
+    } catch (err) {
+        res.status(404).json({ success: false, error: "Alert image not found" });
+    }
+};
+
+app.get("/alerts/image/:filename", handleServerDownloadAlertImage);
+app.get("/alerts/image", handleServerDownloadAlertImage);
+app.get("/alerts/download", handleServerDownloadAlertImage);
+app.get("/alerts/download/:filename", handleServerDownloadAlertImage);
+
 app.get("/stop-processing", (req, res) => {
     if (fs.existsSync(`${__dirname}/isProcessing.txt`)) {
         const data = fs.readFileSync(`${__dirname}/isProcessing.txt`, 'utf8').split('\n');
