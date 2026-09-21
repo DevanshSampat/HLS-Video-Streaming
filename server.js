@@ -183,7 +183,7 @@ const exploreFolderForVideos = (folderPath) => {
             exploreFolderForVideos(fullPath);
         } else {
             const ext = path.extname(files[i]).toLowerCase();
-            if (ext === '.mp4' || ext === '.mkv') {
+            if (ext === '.mp4' || ext === '.mkv' || ext === '.flv' || ext === '.mov' || ext === '.MOV') {
                 const fileId = crypto.createHash('md5').update(fullPath).digest('hex');
                 fileIdPathMap[fileId] = fullPath;
             }
