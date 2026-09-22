@@ -1044,7 +1044,7 @@ app.get("/subtitles", (req, res) => {
 });
 
 app.get("/profile-image", (req, res) => {
-    res.download(`${__dirname}\\profile_image.jpg`);
+    res.download(`${__dirname}\\profile_image.jpg`.replaceAll("\\","/"));
 });
 app.post("/profile-image", (req, res) => {
     try {
