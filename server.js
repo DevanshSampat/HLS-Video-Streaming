@@ -1215,9 +1215,9 @@ const bringTailscaleUp = () => {
         if (stderr) {
             console.log('Streaming to your deivces on current WiFi network. If you wish to stream to your devices on other networks, please use tailscale');
             setTimeout(() => {
-                axios.post('http://localhost:9090', { message: 'Streaming to your deivces on current WiFi network. If you wish to stream to your devices on other networks, you can use tailscale and restart the server' })
+                axios.post('http://localhost:9090', { message: 'Streaming to your deivces on current WiFi network. If you wish to stream to your devices on other networks, you can use tailscale and restart the server' }).catch(e => { });
                 setTimeout(() => {
-                    axios.post('http://localhost:9090', { message: '' })
+                    axios.post('http://localhost:9090', { message: '' }).catch(e => { });
                 }, 10000);
             }, 5000);
             globalUrl = `http://${localIpAddress}:${PORT}`;
