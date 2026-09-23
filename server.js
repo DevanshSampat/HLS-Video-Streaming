@@ -708,6 +708,7 @@ app.use('/stream', async (req, res, next) => {
             res.status(response.status);
             return response.data.pipe(res);
         } catch (err) {
+            console.log(err.message);
             const filename = path.basename(recSubPath.split('?')[0]);
             const localRecPath = path.join(__dirname, '../onvif-backend/recordings', filename);
             if (fs.existsSync(localRecPath)) {
