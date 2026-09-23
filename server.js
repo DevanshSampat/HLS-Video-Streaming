@@ -35,7 +35,7 @@ const fetchRecordingsPeriodically = async () => {
             })).sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
         }
     } catch (err) {
-        
+
     }
 };
 
@@ -1021,7 +1021,7 @@ app.get("/progress", (req, res) => {
 
 app.get(`/download`, (req, res) => {
     let filePath = decodeURIComponent(req.query.id);
-    if(filePath.includes("recordings/")) {
+    if (filePath.includes("recordings/")) {
         return handleServerDownloadRecording(req, res);
     }
     if (filePath.includes('streams/')) filePath = filePath.substring(filePath.indexOf('streams/') + 8);
@@ -1044,7 +1044,7 @@ app.get("/subtitles", (req, res) => {
 });
 
 app.get("/profile-image", (req, res) => {
-    res.download(`${__dirname}\\profile_image.jpg`.replaceAll("\\","/"));
+    res.download(`${__dirname}\\profile_image.jpg`.replaceAll("\\", "/"));
 });
 app.post("/profile-image", (req, res) => {
     try {
