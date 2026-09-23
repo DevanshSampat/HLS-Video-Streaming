@@ -26,7 +26,7 @@ const fetchRecordingsPeriodically = async () => {
         if (backendRes.data && backendRes.data.recordings) {
             cachedRecordings = backendRes.data.recordings.map(rec => ({
                 name: rec.filename,
-                path: `recordings/stream/${rec.filename}`,
+                path: `recordings/${rec.filename}`,
                 downloadPath: `recordings/download?id=${rec.filename}`,
                 sizeMB: rec.sizeMB,
                 modifiedAt: rec.modifiedAt,
@@ -709,15 +709,6 @@ app.use('/stream', async (req, res, next) => {
             return response.data.pipe(res);
         } catch (err) {
             console.log(err.message);
-            const filename = path.basename(recSubPath.split('?')[0]);
-            const localRecPath = path.join(__dirname, '../onvif-backend/recordings', filename);
-            if (fs.existsSync(localRecPath)) {
-                if (recSubPath.includes('download')) {
-                    return res.download(localRecPath, filename);
-                } else {
-                    return res.sendFile(localRecPath);
-                }
-            }
             return res.status(err.response?.status || 404).send("Recording file not found");
         }
     }
