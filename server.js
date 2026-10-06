@@ -1282,6 +1282,10 @@ app.get(`/download`, (req, res) => {
     res.download(filePath);
 });
 
+app.get(`/download/recordings/:filename`, (req, res) => {
+    return handleServerDownloadRecording(req, res);
+});
+
 app.get("/subtitles", (req, res) => {
     let filePath = decodeURIComponent(req.query.id);
     if (filePath.includes("streams/"))
