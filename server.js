@@ -24,6 +24,7 @@ const fetchRecordingsPeriodically = async () => {
     try {
         const backendRes = await axios.get("http://localhost:5001/api/recordings");
         if (backendRes.data && backendRes.data.recordings) {
+            isCameraFeedAvailable = true;
             cachedRecordings = backendRes.data.recordings
                 .map((rec) => ({
                     name: rec.filename,
@@ -38,7 +39,10 @@ const fetchRecordingsPeriodically = async () => {
                     a.name.toLowerCase().localeCompare(b.name.toLowerCase()),
                 );
         }
-    } catch (err) { }
+    } catch (err) {
+        isCameraFeedAvailable = false;
+        cachedRecordings = [];
+     }
 };
 
 fetchRecordingsPeriodically();
