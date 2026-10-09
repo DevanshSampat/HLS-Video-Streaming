@@ -1096,7 +1096,7 @@ app.get("/videos", (req, res) => {
         response.unshift({
             name: rec.name,
             path: rec.path,
-            coverImage: rec.alertExists ? `${globalUrl}/alerts/image/${rec.name.replace(".mp4",".jpg")}` : undefined,
+            coverImage: rec.alertExists ? `${globalUrl}/alerts/image/${rec.name.replace(".mp4", ".jpg")}` : undefined,
             subtitle: false,
         });
     }
@@ -1392,9 +1392,15 @@ app.post("/watch-details", (req, res) => {
     }
     const rawData = body.dataToPut.split('\t');
     const data = {
-        position: rawData[0],
-        duration: rawData[1],
-        audioTrack: rawData[2] || 0
+        position: Number(rawData[0]),
+        duration: Number(rawData[1]),
+        audioTrack: Number(rawData[2] || 0)
+    }
+    if (data.position === 0) {
+        if (fs.existsSync(path.join(__dirname, 'user_watch_data', body.firebaseUid, fileName))) {
+            fs.unlinkSync(path.join(__dirname, 'user_watch_data', body.firebaseUid, fileName))
+        }
+        return res.json({ status: 'successful' })
     }
     fs.writeFileSync(path.join(__dirname, 'user_watch_data', body.firebaseUid, fileName), JSON.stringify(data, null, 4))
     res.statusCode = 200;
