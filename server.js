@@ -20,6 +20,27 @@ let isCameraFeedAvailable = false;
 let recordingsFetchingInterval = 60000;
 let cachedRecordings = [];
 
+const migrateToNewWatchDataSystem = () => {
+    if (!fs.existsSync(path.join(__dirname, "user_watch_data"))) return;
+    const userIds = fs.readdirSync(path.join(__dirname, "user_watch_data"));
+    userIds.forEach(userId => {
+        if (userId.endsWith(".json")) {
+            console.log(`Migrating user watch data for: ${userId.split('.')[0]}`);
+            const userData = JSON.parse(fs.readFileSync(path.join(__dirname, "user_watch_data", userId), "utf8"));
+            Object.keys(userData).forEach(key => {
+                axios.post("http://localhost:9090/watch-details", {
+                    firebaseUid: userId.split('.')[0],
+                    videoId: key,
+                    dataToPut: userData[key]
+                });
+            })
+            fs.unlinkSync(path.join(__dirname, "user_watch_data", userId));
+        }
+    })
+}
+
+migrateToNewWatchDataSystem();
+
 const fetchRecordingsPeriodically = async () => {
     try {
         const backendRes = await axios.get("http://localhost:5001/api/recordings");
@@ -42,7 +63,7 @@ const fetchRecordingsPeriodically = async () => {
     } catch (err) {
         isCameraFeedAvailable = false;
         cachedRecordings = [];
-     }
+    }
 };
 
 fetchRecordingsPeriodically();
@@ -1359,31 +1380,27 @@ app.post("/watch-details", (req, res) => {
     if (!fs.existsSync(__dirname + "/user_watch_data")) {
         fs.mkdirSync(__dirname + "/user_watch_data");
     }
-    fs.readFile(
-        `${__dirname}/user_watch_data/${body.firebaseUid}.json`,
-        (err, data) => {
-            let dataToPut = {};
-            if (data) {
-                dataToPut = JSON.parse(data.toString());
-            }
-            dataToPut[
-                body.videoId
-                    .replaceAll("streams/", "")
-                    .replaceAll("master.m3u8", "")
-                    .replaceAll("/", "")
-                    .split("?")[0]
-            ] = body.dataToPut;
-            fs.writeFileSync(
-                `${__dirname}/user_watch_data/${body.firebaseUid}.json`,
-                JSON.stringify(dataToPut, null, 2),
-            );
-            res.statusCode = 200;
-            res.contentType = "application/json";
-            res.send({
-                status: "successful",
-            });
-        },
-    );
+    if (!fs.existsSync(path.join(__dirname, 'user_watch_data', body.firebaseUid))) {
+        fs.mkdirSync(path.join(__dirname, 'user_watch_data', body.firebaseUid))
+    }
+    const videoId = body.videoId
+        .replaceAll("streams/", "")
+        .replaceAll("master.m3u8", "")
+        .replaceAll("/", "")
+        .split("?")[0];
+    const fileName = videoId + ".json";
+    if (videoId.includes(" ") || videoId.includes(".") || videoId.includes("-") || videoId.includes("_")) {
+        return res.json({ status: "successful" });
+    }
+    const rawData = body.dataToPut.split('\t');
+    const data = {
+        position: rawData[0],
+        duration: rawData[1],
+        audioTrack: rawData[2] || 0
+    }
+    fs.writeFileSync(path.join(__dirname, 'user_watch_data', body.firebaseUid, fileName), JSON.stringify(data, null, 4))
+    res.statusCode = 200;
+    res.send({ status: 'successful' })
 });
 
 app.get("/watch-details", (req, res) => {
@@ -1406,29 +1423,19 @@ app.get("/watch-details", (req, res) => {
         });
         return;
     }
-    fs.readFile(
-        `${__dirname}/user_watch_data/${body.firebaseUid}.json`,
-        (err, data) => {
-            let dataToGet = {};
-            if (data) {
-                dataToGet = JSON.parse(data.toString());
-            }
-            const videoId = body.videoId
-                .replaceAll("streams/", "")
-                .replaceAll("master.m3u8", "")
-                .replaceAll("/", "")
-                .split("?")[0];
-            if (!dataToGet[videoId]) {
-                dataToGet[videoId] = "0\t1";
-            }
-            res.statusCode = 200;
-            res.contentType = "application/json";
-            res.send({
-                status: "successful",
-                data: dataToGet[videoId],
-            });
-        },
-    );
+    const fileName = body.videoId
+        .replaceAll("streams/", "")
+        .replaceAll("master.m3u8", "")
+        .replaceAll("/", "")
+        .split("?")[0] + ".json";
+
+    if (fs.existsSync(path.join(__dirname, "user_watch_data", body.firebaseUid, fileName))) {
+        const data = JSON.parse(fs.readFileSync(path.join(__dirname, "user_watch_data", body.firebaseUid, fileName)))
+        const finalData = `${data.position}\t${data.duration}\t${data.audioTrack}`
+        res.json({ status: "successful", data: finalData });
+    } else {
+        res.json({ status: "successful", data: "0\t1\t0" })
+    }
 });
 
 app.get("/device-name", (req, res) => {
