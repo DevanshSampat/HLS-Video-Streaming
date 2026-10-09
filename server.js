@@ -52,6 +52,7 @@ const fetchRecordingsPeriodically = async () => {
                     path: `recordings/${rec.filename}`,
                     downloadPath: `recordings/download?id=${rec.filename}`,
                     sizeMB: rec.sizeMB,
+                    alertExists: rec.alertExists,
                     modifiedAt: rec.modifiedAt,
                     isRecording: true,
                     subtitle: false,
@@ -1095,10 +1096,7 @@ app.get("/videos", (req, res) => {
         response.unshift({
             name: rec.name,
             path: rec.path,
-            downloadPath: rec.downloadPath,
-            sizeMB: rec.sizeMB,
-            modifiedAt: rec.modifiedAt,
-            isRecording: true,
+            coverImage: rec.alertExists ? `${globalUrl}/alerts/image/${rec.name.replace(".mp4",".jpg")}` : undefined,
             subtitle: false,
         });
     }
