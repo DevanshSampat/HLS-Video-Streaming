@@ -58,7 +58,7 @@ const fetchRecordingsPeriodically = async () => {
                     subtitle: false,
                 }))
                 .sort((a, b) =>
-                    a.name.toLowerCase().localeCompare(b.name.toLowerCase()),
+                    b.name.toLowerCase().localeCompare(a.name.toLowerCase()),
                 );
         }
     } catch (err) {
@@ -1093,7 +1093,7 @@ app.get("/videos", (req, res) => {
 
     // Append periodic recordings stored in separate variable cachedRecordings
     for (const rec of cachedRecordings) {
-        response.unshift({
+        response.push({
             name: rec.name,
             path: rec.path,
             coverImage: rec.alertExists ? `${globalUrl}/alerts/image/${rec.name.replace(".mp4", ".jpg")}` : undefined,
