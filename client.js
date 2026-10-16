@@ -88,7 +88,7 @@ if (isProxyMode) {
   // Pre-connects hole-punched DHT streams so the browser / media player
   // gets 0 ms connection delay on every playlist (.m3u8) & chunk (.ts)
   // -------------------------------------------------------------
-  const WARM_POOL_SIZE = 2;
+  const WARM_POOL_SIZE = 4;
   const warmPool = [];
 
   function fillPool() {
