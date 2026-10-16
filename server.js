@@ -69,7 +69,7 @@ const migrateToNewWatchDataSystem = () => {
                     firebaseUid: userId.split('.')[0],
                     videoId: key,
                     dataToPut: userData[key]
-                });
+                }).catch(() => { });
             })
             fs.unlinkSync(path.join(__dirname, "user_watch_data", userId));
         }
@@ -1884,7 +1884,8 @@ async function start() {
 
         // 2. Listen on local port
         httpServer.listen(PORT, "0.0.0.0", async () => {
-            globalUrl = "http://localhost:9000";
+            const keys = JSON.parse(fs.readFileSync(path.join(__dirname, "dht-key.json")));
+            globalUrl = keys.publicKey;
             if (serverIpAddressResponse) {
                 serverIpAddressResponse.end(globalUrl);
             }
