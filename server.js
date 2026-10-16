@@ -20,6 +20,7 @@ const cachedPreferredQuality = {};
 let isCameraFeedAvailable = false;
 let recordingsFetchingInterval = 60000;
 let cachedRecordings = [];
+const peerIpRegistry = {};
 
 // -------------------------------------------------------------
 // HyperDHT Hole-Punching & Key Management
@@ -224,7 +225,17 @@ httpServer.timeout = 0;
 
 // Initialize HyperDHT node and P2P Server
 const dht = new HyperDHT({ port: 0 });
-const dhtServer = dht.createServer((socket) => {
+const dhtServer = dht.createServer({
+    firewall(remotePublicKey, remoteHandshakePayload) {
+        const peerIdHex = remotePublicKey.toString('hex');
+        const physicalIp = remoteHandshakePayload.addresses4?.[0].host; // The actual network IP
+
+        // Save it to your global registry
+        peerIpRegistry[peerIdHex] = physicalIp;
+
+        return false; // False means "Allow connection"
+    }
+}, (socket) => {
     const remoteKey = socket.remotePublicKey ? socket.remotePublicKey.toString("hex") : `peer-${Date.now()}`;
 
     activePeers.set(remoteKey, {
@@ -239,8 +250,8 @@ const dhtServer = dht.createServer((socket) => {
     if (!socket.setTimeout) socket.setTimeout = (ms, cb) => { if (cb) socket.on('timeout', cb); return socket; };
     if (!socket.unref) socket.unref = () => socket;
     if (!socket.ref) socket.ref = () => socket;
-    socket.cork = () => {};
-    socket.uncork = () => {};
+    socket.cork = () => { };
+    socket.uncork = () => { };
 
     const origWrite = socket.write.bind(socket);
     socket.write = function (data, encoding, cb) {
@@ -1219,6 +1230,9 @@ app.get("/", async (req, res) => {
 app.get("/videos", (req, res) => {
     let ip = req.headers["x-forwarded-for"] || (req.socket && req.socket.remoteAddress) || "local";
     let isDirectConnection = true;
+    if (peerIpRegistry[ip]) {
+        isDirectConnection = peerIpRegistry[ip].startsWith("192.168.");
+    }
     let streamSingleQualityRemotely = false;
     let streamSingleQualityLocally = true;
     let forceStreamSingleQuality = false;
@@ -1232,26 +1246,6 @@ app.get("/videos", (req, res) => {
             userPreferences.streamSingleQualityLocally ?? true;
         forceStreamSingleQuality =
             userPreferences.forceStreamSingleQuality || false;
-    }
-    const isP2P = typeof ip === "string" && ip.length === 64;
-    if (isP2P) {
-        isDirectConnection = true;
-    } else {
-        try {
-            if (typeof ip === "string" && (ip.includes(".") || ip.includes(":"))) {
-                const tailscaleStatus = execSync("tailscale ping " + ip, {
-                    encoding: "utf8",
-                    timeout: 1000,
-                });
-                isDirectConnection = false;
-                const lines = tailscaleStatus.split("\n");
-                for (let i = 0; i < lines.length; i++) {
-                    if (lines[i].includes("DERP") || lines[i].includes("via 192.168.")) {
-                        isDirectConnection = true;
-                    }
-                }
-            }
-        } catch (err) { }
     }
     axios
         .post("http://localhost:9090", {
@@ -1656,77 +1650,6 @@ app.post("/stop", async (req, res) => {
         process.exit(0);
     });
 });
-const bringTailscaleUp = () => {
-    if (streamLocally) {
-        globalUrl = `http://${localIpAddress}:${PORT}`;
-        if (serverIpAddressResponse) {
-            serverIpAddressResponse.end(globalUrl);
-            serverIpAddressResponse = null;
-        }
-        return;
-    }
-    exec(
-        `cd ${__dirname} && tailscale up && tailscale funnel 9000`,
-        (error, stdout, stderr) => { },
-    );
-    exec("tailscale status", (error, stdout, stderr) => {
-        if (stderr) {
-            console.log(
-                "Streaming to your devices on current WiFi network. If you wish to stream to your devices on other networks, you can use tailscale or the P2P HyperDHT hole-punching client.",
-            );
-            setTimeout(() => {
-                axios
-                    .post("http://localhost:9090", {
-                        message:
-                            "Streaming to your devices on current WiFi network. If you wish to stream to your devices on other networks, you can use tailscale or P2P hole-punching.",
-                    })
-                    .catch((e) => { });
-                setTimeout(() => {
-                    axios.post("http://localhost:9090", { message: "" }).catch((e) => { });
-                }, 10000);
-            }, 5000);
-            globalUrl = `http://${localIpAddress}:${PORT}`;
-            if (serverIpAddressResponse) {
-                serverIpAddressResponse.end(globalUrl);
-                serverIpAddressResponse = null;
-            }
-            return;
-        }
-        const lines = stdout.split("\n");
-        for (let i = 0; i < lines.length; i++) {
-            if (
-                lines[i]
-                    .toLowerCase()
-                    .includes(os.hostname().toLowerCase().split(".")[0])
-            ) {
-                exec("tailscale dns status", (error, stdout, stderr) => {
-                    const searchDomainString = stdout.substring(
-                        stdout.indexOf("Search Domains:") + 16,
-                    );
-                    let domain = searchDomainString.substring(
-                        searchDomainString.indexOf("- ") + 2,
-                    );
-                    domain = domain.substring(0, domain.indexOf("\n"));
-                    const url = `https://${os.hostname().toLowerCase().split(".")[0]}.${domain.trim()}`;
-                    if (globalUrl !== url) {
-                        globalUrl = url;
-                        console.log(`🌐 Tailscale URL: ${url}`);
-                    }
-                    if (serverIpAddressResponse) {
-                        serverIpAddressResponse.end(url);
-                        serverIpAddressResponse = null;
-                    }
-                });
-            }
-        }
-    });
-    setTimeout(
-        () => {
-            bringTailscaleUp();
-        },
-        globalUrl === "" ? 5000 : 5 * 60000,
-    );
-};
 
 function printBanner() {
     const line = "═".repeat(74);
@@ -1803,7 +1726,6 @@ async function start() {
                 await prepareAllM3u8Files();
             }
             printBanner();
-            bringTailscaleUp();
         });
     } catch (err) {
         console.error("Failed to start hole-punched streaming server:", err);
