@@ -1698,7 +1698,15 @@ app.get("/subtitles", (req, res) => {
 });
 
 app.get("/profile-image", (req, res) => {
-    res.download(`${__dirname}\\profile_image.jpg`.replaceAll("\\", "/"));
+    const buffer = fs.readFileSync(path.join(__dirname, "profile_image.jpg"));
+    res.writeHead(200, {
+        "Content-Type": "image/jpeg",
+        "Content-Length": buffer.length,
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "keep-alive",
+        "Cache-Control": "public, max-age=86400"
+    });
+    return res.end(buffer);
 });
 app.post("/profile-image", (req, res) => {
     try {
@@ -1877,7 +1885,7 @@ async function start() {
         // 2. Listen on local port
         httpServer.listen(PORT, "0.0.0.0", async () => {
             globalUrl = "http://localhost:9000";
-            if(serverIpAddressResponse) {
+            if (serverIpAddressResponse) {
                 serverIpAddressResponse.end(globalUrl);
             }
             axios
