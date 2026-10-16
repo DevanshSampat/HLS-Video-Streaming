@@ -1876,6 +1876,10 @@ async function start() {
 
         // 2. Listen on local port
         httpServer.listen(PORT, "0.0.0.0", async () => {
+            globalUrl = "http://localhost:9000";
+            if(serverIpAddressResponse) {
+                serverIpAddressResponse.end(globalUrl);
+            }
             axios
                 .get("http://localhost:5001")
                 .then((res) => {
