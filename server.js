@@ -265,6 +265,12 @@ const dhtServer = dht.createServer({
         }
         return ret;
     };
+    socket.on("drain", () => {
+        if (socket._httpMessage) {
+            socket._httpMessage.emit("drain");
+        }
+    });
+
     if (!socket.remotePort) socket.remotePort = 0;
     if (!socket.localPort) socket.localPort = PORT;
     if (!socket.localAddress) socket.localAddress = "127.0.0.1";
@@ -1069,12 +1075,11 @@ function serveVideoFileWithRange(req, res, filePath, contentType = "video/mp4") 
     const stat = fs.statSync(filePath);
     const fileSize = stat.size;
     const range = req.headers.range;
-    const MAX_CHUNK_SIZE = 1024 * 1024; // 1 MB per chunk: low latency, zero backpressure stalls
 
     if (range) {
         const parts = range.replace(/bytes=/, "").split("-");
         const start = parseInt(parts[0], 10);
-        let end = parts[1] ? parseInt(parts[1], 10) : start + MAX_CHUNK_SIZE - 1;
+        let end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
 
         if (isNaN(start) || start >= fileSize) {
             res.writeHead(416, {
@@ -1088,19 +1093,8 @@ function serveVideoFileWithRange(req, res, filePath, contentType = "video/mp4") 
         if (end >= fileSize) {
             end = fileSize - 1;
         }
-        if (end - start + 1 > MAX_CHUNK_SIZE) {
-            end = start + MAX_CHUNK_SIZE - 1;
-        }
 
         const chunkSize = end - start + 1;
-        const buffer = Buffer.alloc(chunkSize);
-        const fd = fs.openSync(filePath, "r");
-        try {
-            fs.readSync(fd, buffer, 0, chunkSize, start);
-        } finally {
-            fs.closeSync(fd);
-        }
-
         res.writeHead(206, {
             "Content-Range": `bytes ${start}-${end}/${fileSize}`,
             "Accept-Ranges": "bytes",
@@ -1110,37 +1104,25 @@ function serveVideoFileWithRange(req, res, filePath, contentType = "video/mp4") 
             "Connection": "keep-alive",
             "Cache-Control": "public, max-age=3600"
         });
-        return res.end(buffer);
-    } else {
-        if (fileSize <= MAX_CHUNK_SIZE) {
-            const buffer = fs.readFileSync(filePath);
-            res.writeHead(200, {
-                "Content-Length": fileSize,
-                "Content-Type": contentType,
-                "Accept-Ranges": "bytes",
-                "Access-Control-Allow-Origin": "*",
-                "Connection": "keep-alive"
-            });
-            return res.end(buffer);
-        }
-
-        const chunkSize = MAX_CHUNK_SIZE;
-        const buffer = Buffer.alloc(chunkSize);
-        const fd = fs.openSync(filePath, "r");
-        try {
-            fs.readSync(fd, buffer, 0, chunkSize, 0);
-        } finally {
-            fs.closeSync(fd);
-        }
-        res.writeHead(206, {
-            "Content-Range": `bytes 0-${chunkSize - 1}/${fileSize}`,
-            "Accept-Ranges": "bytes",
-            "Content-Length": chunkSize,
-            "Content-Type": contentType,
-            "Access-Control-Allow-Origin": "*",
-            "Connection": "keep-alive"
+        const stream = fs.createReadStream(filePath, { start, end });
+        stream.on("error", () => {
+            if (!res.destroyed) res.destroy();
         });
-        return res.end(buffer);
+        return stream.pipe(res);
+    } else {
+        res.writeHead(200, {
+            "Content-Length": fileSize,
+            "Content-Type": contentType,
+            "Accept-Ranges": "bytes",
+            "Access-Control-Allow-Origin": "*",
+            "Connection": "keep-alive",
+            "Cache-Control": "public, max-age=3600"
+        });
+        const stream = fs.createReadStream(filePath);
+        stream.on("error", () => {
+            if (!res.destroyed) res.destroy();
+        });
+        return stream.pipe(res);
     }
 }
 
@@ -1223,20 +1205,21 @@ async function handleStreamRecordingCommon(req, res, recSubPath) {
         const response = await axios.get(
             `http://localhost:5001/api/recordings/stream/${recSubPath}`,
             {
-                responseType: "arraybuffer",
+                responseType: "stream",
                 headers: req.headers.range ? { range: req.headers.range } : {},
                 params: req.query,
-                timeout: 10000,
+                timeout: 600000,
             }
         );
-        const buf = Buffer.from(response.data);
         const headers = {
             "Content-Type": response.headers["content-type"] || "video/mp4",
-            "Content-Length": buf.length,
             "Accept-Ranges": "bytes",
             "Access-Control-Allow-Origin": "*",
             "Connection": "keep-alive"
         };
+        if (response.headers["content-length"]) {
+            headers["Content-Length"] = response.headers["content-length"];
+        }
         if (response.headers["content-range"]) {
             headers["Content-Range"] = response.headers["content-range"];
         }
@@ -1244,7 +1227,10 @@ async function handleStreamRecordingCommon(req, res, recSubPath) {
             headers["Content-Disposition"] = response.headers["content-disposition"];
         }
         res.writeHead(response.status || 200, headers);
-        return res.end(buf);
+        response.data.on("error", () => {
+            if (!res.destroyed) res.destroy();
+        });
+        return response.data.pipe(res);
     } catch (err) {
         const msg = "Recording file not found";
         res.writeHead(err.response?.status || 404, {
@@ -1485,30 +1471,41 @@ const handleServerDownloadRecording = async (req, res) => {
     const recordingsDir = path.join(__dirname, "../onvif-backend/recordings");
     const filePath = path.join(recordingsDir, filename);
     if (fs.existsSync(filePath)) {
-        const buffer = fs.readFileSync(filePath);
+        const stat = fs.statSync(filePath);
         res.writeHead(200, {
             "Content-Disposition": `attachment; filename="${filename}"`,
             "Content-Type": "video/mp4",
-            "Content-Length": buffer.length,
+            "Content-Length": stat.size,
+            "Accept-Ranges": "bytes",
             "Access-Control-Allow-Origin": "*",
             "Connection": "keep-alive"
         });
-        return res.end(buffer);
+        const stream = fs.createReadStream(filePath);
+        stream.on("error", () => {
+            if (!res.destroyed) res.destroy();
+        });
+        return stream.pipe(res);
     }
     try {
         const response = await axios.get(
             `http://localhost:5001/api/recordings/download?id=${filename}`,
-            { responseType: "arraybuffer", timeout: 15000 },
+            { responseType: "stream", timeout: 600000 },
         );
-        const buf = Buffer.from(response.data);
-        res.writeHead(200, {
+        const headers = {
             "Content-Disposition": `attachment; filename="${filename}"`,
-            "Content-Type": "video/mp4",
-            "Content-Length": buf.length,
+            "Content-Type": response.headers["content-type"] || "video/mp4",
+            "Accept-Ranges": "bytes",
             "Access-Control-Allow-Origin": "*",
             "Connection": "keep-alive"
+        };
+        if (response.headers["content-length"]) {
+            headers["Content-Length"] = response.headers["content-length"];
+        }
+        res.writeHead(200, headers);
+        response.data.on("error", () => {
+            if (!res.destroyed) res.destroy();
         });
-        return res.end(buf);
+        return response.data.pipe(res);
     } catch (err) {
         res.writeHead(404, { "Content-Type": "text/plain", "Connection": "keep-alive" });
         return res.end("Recording file not found");
@@ -1660,8 +1657,12 @@ app.get("/progress", (req, res) => {
     }
 });
 
-app.get(`/download`, (req, res) => {
-    let filePath = decodeURIComponent(req.query.id);
+const handleServerDownloadVideo = (req, res) => {
+    let rawPath = req.query.id || req.params[0] || req.params.filename || req.path;
+    if (!rawPath) {
+        return res.status(400).send("Video id or path required");
+    }
+    let filePath = decodeURIComponent(rawPath);
     if (filePath.includes("recordings/")) {
         return handleServerDownloadRecording(req, res);
     }
@@ -1669,13 +1670,33 @@ app.get(`/download`, (req, res) => {
         filePath = filePath.substring(filePath.indexOf("streams/") + 8);
     if (filePath.includes("/master.m3u8"))
         filePath = filePath.substring(0, filePath.lastIndexOf("/"));
-    filePath = filePath.replaceAll("\\", "").replaceAll("/", "");
-    filePath = fileIdPathMap[filePath];
-    res.download(filePath);
+    if (filePath.startsWith("/download/"))
+        filePath = filePath.substring("/download/".length);
+    if (filePath.startsWith("download/"))
+        filePath = filePath.substring("download/".length);
+    filePath = filePath.replaceAll("\\", "").replaceAll("/", "").trim();
+
+    const resolvedPath = fileIdPathMap[filePath];
+    if (resolvedPath && fs.existsSync(resolvedPath)) {
+        return res.download(resolvedPath);
+    }
+    return res.status(404).send("Video file not found");
+};
+
+app.get("/download", (req, res) => {
+    let idParam = req.query.id;
+    if (idParam && idParam.includes("recordings/")) {
+        return handleServerDownloadRecording(req, res);
+    }
+    return handleServerDownloadVideo(req, res);
 });
 
-app.get(`/download/recordings/:filename`, (req, res) => {
-    return handleServerDownloadRecording(req, res);
+app.get("/download/recordings/:filename", handleServerDownloadRecording);
+app.get("/download/recordings", handleServerDownloadRecording);
+app.use("/download/streams", handleServerDownloadVideo);
+app.get("/download/:filename", (req, res, next) => {
+    if (req.params.filename === "recordings") return next();
+    return handleServerDownloadVideo(req, res);
 });
 
 app.get("/subtitles", (req, res) => {
