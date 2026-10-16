@@ -1266,6 +1266,8 @@ app.use("/stream", async (req, res, next) => {
     } else if (id.includes("recordings/")) {
         const recSubPath = id.substring(id.indexOf("recordings/") + 11);
         return handleStreamRecordingCommon(req, res, recSubPath);
+    } else if (id.includes("alerts/")) {
+        return handleServerDownloadAlertImage(req, res);
     } else if (id.includes("streams/")) {
         id = id.substring(id.lastIndexOf("streams/") + 8);
         id = id.substring(0, id.lastIndexOf("/"));
@@ -1400,12 +1402,21 @@ app.get("/videos", (req, res) => {
         a.name.toLowerCase().localeCompare(b.name.toLowerCase()),
     );
 
+    const clientHost = req.get("host");
+    const proto = clientHost.includes(":") ? "http" : "https";
+    const requestBaseUrl = (clientHost && clientHost !== "dht-server") ? `${proto}://${clientHost}` : (globalUrl || "");
+
     // Append periodic recordings stored in separate variable cachedRecordings
     for (const rec of cachedRecordings) {
+        const alertFilename = rec.name.replace(".mp4", ".jpg");
+        const alertPath = path.join(__dirname, "../onvif-backend/human_detection_alerts", alertFilename);
+        const alertExists = rec.alertExists || fs.existsSync(alertPath);
         response.push({
             name: rec.name,
             path: rec.path,
-            coverImage: rec.alertExists ? `${globalUrl}/alerts/image/${rec.name.replace(".mp4", ".jpg")}` : undefined,
+            coverImage: alertExists
+                ? (requestBaseUrl ? `${requestBaseUrl}/alerts/image/${alertFilename}` : `/alerts/image/${alertFilename}`)
+                : undefined,
             subtitle: false,
         });
     }
@@ -1547,8 +1558,11 @@ app.get("/alerts", async (req, res) => {
 });
 
 const handleServerDownloadAlertImage = async (req, res) => {
-    const filenameParam =
+    let filenameParam =
         req.query.id || req.query.filename || req.params.filename;
+    if (!filenameParam && req.path) {
+        filenameParam = path.basename(req.path);
+    }
     if (!filenameParam) {
         return res
             .status(400)
@@ -1583,11 +1597,18 @@ const handleServerDownloadAlertImage = async (req, res) => {
         });
         return res.end(buf);
     } catch (err) {
-        res.writeHead(404, { "Content-Type": "text/plain", "Connection": "keep-alive" });
-        return res.end("Alert image not found");
+        const msg = "Alert image not found";
+        res.writeHead(404, {
+            "Content-Type": "text/plain",
+            "Content-Length": Buffer.byteLength(msg),
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*"
+        });
+        return res.end(msg);
     }
 };
 
+app.get("/alerts/:filename", handleServerDownloadAlertImage);
 app.get("/alerts/image/:filename", handleServerDownloadAlertImage);
 app.get("/alerts/image", handleServerDownloadAlertImage);
 app.get("/alerts/download", handleServerDownloadAlertImage);
