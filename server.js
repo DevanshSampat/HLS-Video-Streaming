@@ -1154,15 +1154,18 @@ async function handleCctvFeed(req, res, streamPath) {
         try {
             const buffer = fs.readFileSync(localFile);
             if (buffer.length > 0) {
-                res.writeHead(200, {
+                const headers = {
                     "Content-Type": contentType,
                     "Content-Length": buffer.length,
                     "Access-Control-Allow-Origin": "*",
                     "Connection": "keep-alive",
-                    "Cache-Control": isM3u8 ? "no-cache, no-store, must-revalidate" : "public, max-age=3600",
-                    "Pragma": isM3u8 ? "no-cache" : undefined,
-                    "Expires": isM3u8 ? "0" : undefined
-                });
+                    "Cache-Control": isM3u8 ? "no-cache, no-store, must-revalidate" : "public, max-age=3600"
+                };
+                if (isM3u8) {
+                    headers["Pragma"] = "no-cache";
+                    headers["Expires"] = "0";
+                }
+                res.writeHead(200, headers);
                 return res.end(buffer);
             }
         } catch (readErr) {
