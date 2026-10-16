@@ -1884,8 +1884,7 @@ async function start() {
 
         // 2. Listen on local port
         httpServer.listen(PORT, "0.0.0.0", async () => {
-            const keys = JSON.parse(fs.readFileSync(path.join(__dirname, "dht-key.json")));
-            globalUrl = keys.publicKey;
+            globalUrl = serverPublicKey;
             if (serverIpAddressResponse) {
                 serverIpAddressResponse.end(globalUrl);
             }
