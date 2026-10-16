@@ -14,7 +14,7 @@ const HyperDHT = require("hyperdht");
 const httpPort = 6969;
 let serverIpAddressResponse;
 let lastRequestTime = {};
-const deletionInterval = 5 * 60 * 1000;
+const deletionInterval = 2 * 60 * 60 * 1000;
 const currentlyProcessingChunks = {};
 const cachedPreferredQuality = {};
 let isCameraFeedAvailable = false;
@@ -129,7 +129,7 @@ const deleteFolderRecursive = (dirPath) => {
     }
 };
 
-deleteFolderRecursive(path.join(__dirname, "streams"));
+// deleteFolderRecursive(path.join(__dirname, "streams"));
 
 const deleteChunkedFiles = () => {
     if (!fs.existsSync(path.join(__dirname, "streams"))) return;
@@ -149,7 +149,7 @@ const deleteChunkedFiles = () => {
 };
 
 setInterval(deleteChunkedFiles, deletionInterval);
-deleteChunkedFiles();
+// deleteChunkedFiles();
 
 const ffmpeg = require("fluent-ffmpeg");
 let ffmpegBinaryPath = "ffmpeg";
@@ -217,6 +217,10 @@ app.use((req, res, next) => {
 });
 
 const httpServer = http.createServer(app);
+httpServer.keepAliveTimeout = 600000;
+httpServer.headersTimeout = 0;
+httpServer.requestTimeout = 0;
+httpServer.timeout = 0;
 
 // Initialize HyperDHT node and P2P Server
 const dht = new HyperDHT({ port: 0 });
@@ -232,6 +236,24 @@ const dhtServer = dht.createServer((socket) => {
     if (!socket.setNoDelay) socket.setNoDelay = () => socket;
     if (!socket.setKeepAlive) socket.setKeepAlive = () => socket;
     if (!socket.destroySoon) socket.destroySoon = () => socket.end();
+    if (!socket.setTimeout) socket.setTimeout = (ms, cb) => { if (cb) socket.on('timeout', cb); return socket; };
+    if (!socket.unref) socket.unref = () => socket;
+    if (!socket.ref) socket.ref = () => socket;
+    socket.cork = () => {};
+    socket.uncork = () => {};
+
+    const origWrite = socket.write.bind(socket);
+    socket.write = function (data, encoding, cb) {
+        if (typeof encoding === 'function') {
+            cb = encoding;
+            encoding = null;
+        }
+        const ret = origWrite(data);
+        if (typeof cb === 'function') {
+            process.nextTick(cb);
+        }
+        return ret;
+    };
     if (!socket.remotePort) socket.remotePort = 0;
     if (!socket.localPort) socket.localPort = PORT;
     if (!socket.localAddress) socket.localAddress = "127.0.0.1";
@@ -593,7 +615,7 @@ async function prepareAllM3u8Files() {
 const activeTranscodes = {};
 const transcodeQueue = [];
 let activeTranscodeCount = 0;
-const MAX_CONCURRENT = Math.max(1, os.cpus().length - 1);
+const MAX_CONCURRENT = 2;
 
 function runNextInQueue() {
     if (activeTranscodeCount >= MAX_CONCURRENT) return;
@@ -1134,11 +1156,14 @@ app.use("/stream", (req, res) => {
             const contentType = filePath.endsWith(".m3u8")
                 ? "application/vnd.apple.mpegurl"
                 : "video/mp2t";
-            res.sendFile(filePath, {
-                headers: {
-                    "Content-Type": contentType,
-                },
+            const buffer = fs.readFileSync(filePath);
+            res.writeHead(200, {
+                "Content-Type": contentType,
+                "Content-Length": buffer.length,
+                "Access-Control-Allow-Origin": "*",
+                "Connection": "keep-alive"
             });
+            res.end(buffer);
             if (filePath.endsWith(".ts")) {
                 prefetchNextSegments(filePath);
             }

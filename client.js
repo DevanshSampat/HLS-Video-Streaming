@@ -83,11 +83,90 @@ function isNormalDisconnect(err) {
 }
 
 if (isProxyMode) {
-  const proxyServer = net.createServer((clientSocket) => {
-    // When a browser or player connects, open a hole-punched DHT stream
-    const dhtStream = dht.connect(serverPublicKey);
+  // -------------------------------------------------------------
+  // Warm Connection Pool for Instant Video Chunk Streaming
+  // Pre-connects hole-punched DHT streams so the browser / media player
+  // gets 0 ms connection delay on every playlist (.m3u8) & chunk (.ts)
+  // -------------------------------------------------------------
+  const WARM_POOL_SIZE = 2;
+  const warmPool = [];
 
-    // Proactively clean up stream pairs on close without triggering premature close errors
+  function fillPool() {
+    while (warmPool.length < WARM_POOL_SIZE) {
+      const stream = dht.connect(serverPublicKey);
+      if (!stream.setNoDelay) stream.setNoDelay = () => stream;
+      if (!stream.setKeepAlive) stream.setKeepAlive = () => stream;
+
+      const item = { stream, ready: false };
+
+      stream.once('open', () => {
+        item.ready = true;
+      });
+      stream.once('connect', () => {
+        item.ready = true;
+      });
+
+      function onStreamDone() {
+        const idx = warmPool.indexOf(item);
+        if (idx !== -1) warmPool.splice(idx, 1);
+        setTimeout(fillPool, 200);
+      }
+
+      stream.once('close', onStreamDone);
+      stream.once('error', onStreamDone);
+
+      warmPool.push(item);
+    }
+  }
+
+  // Pre-fill warm pool immediately on launch
+  fillPool();
+
+  async function acquireWarmStream() {
+    // 1. Try already-connected ready stream from the pool
+    const readyIdx = warmPool.findIndex((i) => i.ready && !i.stream.destroyed);
+    if (readyIdx !== -1) {
+      const item = warmPool.splice(readyIdx, 1)[0];
+      fillPool();
+      return item.stream;
+    }
+
+    // 2. If streams are still handshaking, wait for the oldest to finish
+    const pending = warmPool.find(i => !i.stream.destroyed);
+    if (pending) {
+      warmPool.splice(warmPool.indexOf(pending), 1);
+      fillPool();
+      if (!pending.ready) {
+        await new Promise((resolve) => {
+          pending.stream.once('open', resolve);
+          pending.stream.once('error', resolve);
+        });
+      }
+      if (!pending.stream.destroyed) return pending.stream;
+    }
+
+    // 3. Fallback: connect fresh and wait for open
+    fillPool();
+    const stream = dht.connect(serverPublicKey);
+    if (!stream.setNoDelay) stream.setNoDelay = () => stream;
+    if (!stream.setKeepAlive) stream.setKeepAlive = () => stream;
+    await new Promise((resolve) => {
+      stream.once('open', resolve);
+      stream.once('error', resolve);
+    });
+    return stream;
+  }
+
+  const proxyServer = net.createServer(async (clientSocket) => {
+    clientSocket.setNoDelay(true);
+    clientSocket.setKeepAlive(true, 120000);
+
+    const dhtStream = await acquireWarmStream();
+    if (!dhtStream || dhtStream.destroyed) {
+      clientSocket.destroy();
+      return;
+    }
+
     clientSocket.on('close', () => {
       if (!dhtStream.destroyed) dhtStream.destroy();
     });
@@ -97,7 +176,6 @@ if (isProxyMode) {
     });
 
     dhtStream.on('error', (err) => {
-      // Suppress normal peer/player disconnect errors and stream aborts
       if (!isNormalDisconnect(err)) {
         console.warn('[Proxy Error] DHT stream error:', err.message);
       }
@@ -111,7 +189,6 @@ if (isProxyMode) {
       if (!dhtStream.destroyed) dhtStream.destroy();
     });
 
-    // Bidirectional piping between local TCP player and remote hole-punched DHT stream
     clientSocket.pipe(dhtStream).pipe(clientSocket);
   });
 
@@ -145,18 +222,20 @@ if (isProxyMode) {
     console.log('     Press Ctrl+C to terminate the proxy.\n' + line + '\n');
   });
 
-  process.on('SIGINT', async () => {
+  const closeGracefully = async () => {
     console.log('\nClosing proxy...');
     proxyServer.close();
+    for (const item of warmPool) {
+      try {
+        if (!item.stream.destroyed) item.stream.destroy();
+      } catch (e) {}
+    }
     await dht.destroy();
     process.exit(0);
-  });
+  };
 
-  process.on('SIGTERM', async () => {
-    proxyServer.close();
-    await dht.destroy();
-    process.exit(0);
-  });
+  process.on('SIGINT', closeGracefully);
+  process.on('SIGTERM', closeGracefully);
 }
 
 // -------------------------------------------------------------
