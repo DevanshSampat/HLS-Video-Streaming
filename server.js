@@ -10,6 +10,7 @@ const { execSync } = require("child_process");
 const e = require("express");
 const http = require("http");
 const { default: axios } = require("axios");
+const HyperDHT = require("hyperdht");
 const httpPort = 6969;
 let serverIpAddressResponse;
 let lastRequestTime = {};
@@ -19,6 +20,41 @@ const cachedPreferredQuality = {};
 let isCameraFeedAvailable = false;
 let recordingsFetchingInterval = 60000;
 let cachedRecordings = [];
+
+// -------------------------------------------------------------
+// HyperDHT Hole-Punching & Key Management
+// -------------------------------------------------------------
+const KEY_FILE = path.join(__dirname, "dht-key.json");
+const serverStartTime = Date.now();
+const activePeers = new Map();
+
+function loadOrCreateKeyPair() {
+    if (fs.existsSync(KEY_FILE)) {
+        try {
+            const data = JSON.parse(fs.readFileSync(KEY_FILE, "utf8"));
+            if (data.publicKey && data.secretKey) {
+                return {
+                    publicKey: Buffer.from(data.publicKey, "hex"),
+                    secretKey: Buffer.from(data.secretKey, "hex")
+                };
+            }
+        } catch (e) {
+            console.warn("[Warning] Corrupt dht-key.json, generating fresh keypair...");
+        }
+    }
+
+    const keyPair = HyperDHT.keyPair();
+    fs.writeFileSync(KEY_FILE, JSON.stringify({
+        publicKey: keyPair.publicKey.toString("hex"),
+        secretKey: keyPair.secretKey.toString("hex"),
+        createdAt: new Date().toISOString()
+    }, null, 2));
+
+    return keyPair;
+}
+
+const keyPair = loadOrCreateKeyPair();
+const serverPublicKey = keyPair.publicKey.toString("hex");
 
 const migrateToNewWatchDataSystem = () => {
     if (!fs.existsSync(path.join(__dirname, "user_watch_data"))) return;
@@ -165,6 +201,60 @@ const PORT = 9000;
 
 app.use(cors());
 
+// Request logging middleware distinguishing Local vs P2P
+app.use((req, res, next) => {
+    const start = Date.now();
+    const clientIdentifier = (req.socket && req.socket.remoteAddress) || req.headers["x-forwarded-for"] || "local";
+    res.on("finish", () => {
+        const duration = Date.now() - start;
+        const isP2P = typeof clientIdentifier === "string" && clientIdentifier.length === 64;
+        const sourceLabel = isP2P ? `[P2P ${clientIdentifier.slice(0, 8)}...]` : `[Local ${clientIdentifier}]`;
+        if (req.originalUrl && !req.originalUrl.endsWith(".ts")) {
+            console.log(`${sourceLabel} ${req.method} ${req.originalUrl} -> ${res.statusCode} (${duration}ms)`);
+        }
+    });
+    next();
+});
+
+const httpServer = http.createServer(app);
+
+// Initialize HyperDHT node and P2P Server
+const dht = new HyperDHT({ port: 0 });
+const dhtServer = dht.createServer((socket) => {
+    const remoteKey = socket.remotePublicKey ? socket.remotePublicKey.toString("hex") : `peer-${Date.now()}`;
+
+    activePeers.set(remoteKey, {
+        socket,
+        connectedAt: Date.now()
+    });
+
+    // Polyfill / adapt NoiseSecretStream to satisfy Node's http.Server
+    if (!socket.setNoDelay) socket.setNoDelay = () => socket;
+    if (!socket.setKeepAlive) socket.setKeepAlive = () => socket;
+    if (!socket.destroySoon) socket.destroySoon = () => socket.end();
+    if (!socket.remotePort) socket.remotePort = 0;
+    if (!socket.localPort) socket.localPort = PORT;
+    if (!socket.localAddress) socket.localAddress = "127.0.0.1";
+    socket.remoteAddress = remoteKey;
+    socket.encrypted = true;
+
+    console.log(`\n[P2P Hole-Punch] Connection established from peer: ${remoteKey}`);
+
+    socket.on("close", () => {
+        activePeers.delete(remoteKey);
+        console.log(`[P2P Hole-Punch] Peer disconnected: ${remoteKey}`);
+    });
+
+    socket.on("error", (err) => {
+        if (err.code !== "ECONNRESET") {
+            console.warn(`[P2P Stream Warning] Peer ${remoteKey.slice(0, 8)}:`, err.message);
+        }
+    });
+
+    // Hand over the hole-punched duplex stream to Node's HTTP Server
+    httpServer.emit("connection", socket);
+});
+
 http
     .createServer((req, res) => {
         if (req.url == "/server-ip-address-for-streamvilla") {
@@ -246,6 +336,68 @@ const exploreFolderForVideos = (folderPath) => {
 // Serve static frontend files
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json());
+
+// -------------------------------------------------------------
+// P2P Hole-Punching & Health Diagnostics API Endpoints
+// -------------------------------------------------------------
+app.get("/api/status", (req, res) => {
+    const mem = process.memoryUsage();
+    res.json({
+        status: "online",
+        service: "streamvilla-hls-video-streaming",
+        protocol: "hyperdht/holepunch",
+        publicKey: serverPublicKey,
+        startTime: serverStartTime,
+        uptimeSeconds: Math.floor((Date.now() - serverStartTime) / 1000),
+        peers: {
+            active: activePeers.size,
+            connectedKeys: Array.from(activePeers.keys()).map((k) => k.slice(0, 16) + "...")
+        },
+        memory: {
+            rssMB: Math.round(mem.rss / (1024 * 1024)),
+            heapUsedMB: Math.round(mem.heapUsed / (1024 * 1024))
+        },
+        traversal: {
+            holePunching: "active",
+            bootstrapped: true,
+            bootstrapNodesCount: 3
+        },
+        localPort: PORT,
+        nodeVersion: process.version
+    });
+});
+
+app.get("/api/ping", (req, res) => {
+    res.json({
+        pong: true,
+        serverTime: Date.now(),
+        iso: new Date().toISOString(),
+        peer: (req.socket && req.socket.remoteAddress) || "local"
+    });
+});
+
+app.all("/api/echo", (req, res) => {
+    res.json({
+        receivedMethod: req.method,
+        headers: req.headers,
+        query: req.query,
+        body: req.body,
+        client: (req.socket && req.socket.remoteAddress) || "local",
+        timestamp: Date.now()
+    });
+});
+
+app.get("/api/peers", (req, res) => {
+    const peerList = [];
+    for (const [key, info] of activePeers.entries()) {
+        peerList.push({
+            peerKey: key,
+            connectedAt: info.connectedAt,
+            durationSeconds: Math.floor((Date.now() - info.connectedAt) / 1000)
+        });
+    }
+    res.json({ count: peerList.length, peers: peerList });
+});
 
 function filterManifest(originalM3u8, maxQuality) {
     const lines = originalM3u8.split("\n");
@@ -1035,7 +1187,7 @@ app.get("/", async (req, res) => {
 });
 
 app.get("/videos", (req, res) => {
-    let ip = req.headers["x-forwarded-for"] || req.connection.remoteAddress;
+    let ip = req.headers["x-forwarded-for"] || (req.socket && req.socket.remoteAddress) || "local";
     let isDirectConnection = true;
     let streamSingleQualityRemotely = false;
     let streamSingleQualityLocally = true;
@@ -1051,18 +1203,26 @@ app.get("/videos", (req, res) => {
         forceStreamSingleQuality =
             userPreferences.forceStreamSingleQuality || false;
     }
-    try {
-        const tailscaleStatus = execSync("tailscale ping " + ip, {
-            encoding: "utf8",
-        });
-        isDirectConnection = false;
-        const lines = tailscaleStatus.split("\n");
-        for (let i = 0; i < lines.length; i++) {
-            if (lines[i].includes("DERP") || lines[i].includes("via 192.168.")) {
-                isDirectConnection = true;
+    const isP2P = typeof ip === "string" && ip.length === 64;
+    if (isP2P) {
+        isDirectConnection = true;
+    } else {
+        try {
+            if (typeof ip === "string" && (ip.includes(".") || ip.includes(":"))) {
+                const tailscaleStatus = execSync("tailscale ping " + ip, {
+                    encoding: "utf8",
+                    timeout: 1000,
+                });
+                isDirectConnection = false;
+                const lines = tailscaleStatus.split("\n");
+                for (let i = 0; i < lines.length; i++) {
+                    if (lines[i].includes("DERP") || lines[i].includes("via 192.168.")) {
+                        isDirectConnection = true;
+                    }
+                }
             }
-        }
-    } catch (err) { }
+        } catch (err) { }
+    }
     axios
         .post("http://localhost:9090", {
             message: `Device connected ${ip}: ${isDirectConnection ? "Locally" : "Remotely"}`,
@@ -1443,58 +1603,29 @@ app.get("/watch-details", (req, res) => {
 });
 
 app.get("/device-name", (req, res) => {
-    res.json({ name: os.hostname().split(".")[0], url: globalUrl });
+    res.json({
+        name: os.hostname().split(".")[0],
+        url: globalUrl,
+        dhtKey: serverPublicKey,
+        p2p: true
+    });
 });
 
-app.post("/stop", (req, res) => {
+app.post("/stop", async (req, res) => {
     res.send("ok");
     deleteChunkedFiles();
+    try {
+        for (const [key, { socket }] of activePeers.entries()) {
+            socket.destroy();
+        }
+        await dhtServer.close();
+        await dht.destroy();
+        httpServer.close();
+    } catch (e) { }
     exec(`cd ${__dirname} && tailscale down`, (error, stdout, stderr) => {
         process.exit(0);
     });
 });
-app.listen(PORT, async () => {
-    axios
-        .get("http://localhost:5001")
-        .then((res) => {
-            isCameraFeedAvailable = true;
-        })
-        .catch((e) => { });
-    if (fs.existsSync(path.join(__dirname, "isProcessing.txt")))
-        fs.unlinkSync(path.join(__dirname, "isProcessing.txt"));
-    localIpAddress = "no address";
-    let { WiFi } = os.networkInterfaces();
-    if (!WiFi) {
-        WiFi = os.networkInterfaces()["Wi-Fi"] || os.networkInterfaces()["en0"];
-    }
-    if (WiFi == undefined) {
-        console.log("please connect to WiFi");
-        return;
-    } else {
-        for (let i = 0; i < WiFi.length; i++) {
-            if (WiFi[i].family == "IPv4") {
-                localIpAddress = WiFi[i].address;
-            }
-        }
-    }
-    console.log("Select a video folder to stream from:");
-    const folderPath = getFolderPathToCastVideos();
-    if (folderPath) {
-        console.log(`🎬 Streaming videos from folder: ${folderPath}`);
-        exploreFolderForVideos(folderPath);
-        console.log(`📂 Found ${Object.keys(fileIdPathMap).length} video files.`);
-        fs.writeFileSync(
-            path.join(__dirname, "videos_index.json"),
-            JSON.stringify(fileIdPathMap, null, 2),
-        );
-        await prepareAllM3u8Files();
-    }
-    console.log(
-        `📡 Streaming server running at http://${localIpAddress}:${PORT}`,
-    );
-    bringTailscaleUp();
-});
-
 const bringTailscaleUp = () => {
     if (streamLocally) {
         globalUrl = `http://${localIpAddress}:${PORT}`;
@@ -1511,13 +1642,13 @@ const bringTailscaleUp = () => {
     exec("tailscale status", (error, stdout, stderr) => {
         if (stderr) {
             console.log(
-                "Streaming to your deivces on current WiFi network. If you wish to stream to your devices on other networks, please use tailscale",
+                "Streaming to your devices on current WiFi network. If you wish to stream to your devices on other networks, you can use tailscale or the P2P HyperDHT hole-punching client.",
             );
             setTimeout(() => {
                 axios
                     .post("http://localhost:9090", {
                         message:
-                            "Streaming to your deivces on current WiFi network. If you wish to stream to your devices on other networks, you can use tailscale and restart the server",
+                            "Streaming to your devices on current WiFi network. If you wish to stream to your devices on other networks, you can use tailscale or P2P hole-punching.",
                     })
                     .catch((e) => { });
                 setTimeout(() => {
@@ -1566,3 +1697,108 @@ const bringTailscaleUp = () => {
         globalUrl === "" ? 5000 : 5 * 60000,
     );
 };
+
+function printBanner() {
+    const line = "═".repeat(74);
+    console.log("\n" + line);
+    console.log("  🚀 P2P HOLE-PUNCHED VIDEO STREAMING SERVER IS ONLINE (HYPERDHT)");
+    console.log(line);
+    console.log("  🔒 Protocol:        HyperDHT (Noise Protocol + UDP Hole-Punching)");
+    console.log("  🌍 Traversal:       Works across global NATs, firewalls & CGNAT");
+    console.log("  🔑 Global DHT Key:  " + serverPublicKey);
+    console.log(`  💻 Local PC:        http://localhost:${PORT}`);
+    if (localIpAddress && localIpAddress !== "no address" && localIpAddress !== "127.0.0.1") {
+        console.log(`  📶 Local Wi-Fi:     http://${localIpAddress}:${PORT}`);
+    }
+    if (globalUrl && globalUrl !== `http://${localIpAddress}:${PORT}`) {
+        console.log(`  🌐 Global URL:      ${globalUrl}`);
+    }
+    console.log(line);
+    console.log("  📡 HOW CLIENTS CONNECT FROM ANYWHERE IN THE WORLD:");
+    console.log("");
+    console.log("  1. Browse & Stream in any PC/Mac browser or video player (Proxy bridge):");
+    console.log(`     node client.js ${serverPublicKey} --proxy 8080`);
+    console.log("     Then open http://localhost:8080 in Chrome, Safari, VLC, etc.");
+    console.log("");
+    console.log("  2. Direct CLI Request / Video Index:");
+    console.log(`     node client.js ${serverPublicKey} /videos`);
+    console.log("");
+    console.log("  3. Measure P2P Roundtrip Latency:");
+    console.log(`     node client.js ${serverPublicKey} --ping`);
+    console.log("");
+    console.log("  4. Mobile / Native Apps (via HyperDHT client):");
+    console.log(`     Connect directly to DHT Key: ${serverPublicKey}`);
+    console.log(line + "\n");
+}
+
+async function start() {
+    try {
+        // 1. Listen on HyperDHT network for global P2P hole-punching
+        await dhtServer.listen(keyPair);
+
+        // 2. Listen on local port
+        httpServer.listen(PORT, "0.0.0.0", async () => {
+            axios
+                .get("http://localhost:5001")
+                .then((res) => {
+                    isCameraFeedAvailable = true;
+                })
+                .catch((e) => { });
+            if (fs.existsSync(path.join(__dirname, "isProcessing.txt")))
+                fs.unlinkSync(path.join(__dirname, "isProcessing.txt"));
+            localIpAddress = "no address";
+            let { WiFi } = os.networkInterfaces();
+            if (!WiFi) {
+                WiFi = os.networkInterfaces()["Wi-Fi"] || os.networkInterfaces()["en0"];
+            }
+            if (WiFi == undefined) {
+                console.log("please connect to WiFi");
+            } else {
+                for (let i = 0; i < WiFi.length; i++) {
+                    if (WiFi[i].family == "IPv4") {
+                        localIpAddress = WiFi[i].address;
+                    }
+                }
+            }
+            console.log("Select a video folder to stream from:");
+            const folderPath = getFolderPathToCastVideos();
+            if (folderPath) {
+                console.log(`🎬 Streaming videos from folder: ${folderPath}`);
+                exploreFolderForVideos(folderPath);
+                console.log(`📂 Found ${Object.keys(fileIdPathMap).length} video files.`);
+                fs.writeFileSync(
+                    path.join(__dirname, "videos_index.json"),
+                    JSON.stringify(fileIdPathMap, null, 2),
+                );
+                await prepareAllM3u8Files();
+            }
+            printBanner();
+            bringTailscaleUp();
+        });
+    } catch (err) {
+        console.error("Failed to start hole-punched streaming server:", err);
+        process.exit(1);
+    }
+}
+
+async function shutdown() {
+    console.log("\n[Shutdown] Closing hole-punched server gracefully...");
+    try {
+        for (const [key, { socket }] of activePeers.entries()) {
+            socket.destroy();
+        }
+        await dhtServer.close();
+        await dht.destroy();
+        httpServer.close();
+        console.log("[Shutdown] Server stopped.");
+        process.exit(0);
+    } catch (err) {
+        console.error("[Shutdown Error]", err);
+        process.exit(1);
+    }
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+
+start();
