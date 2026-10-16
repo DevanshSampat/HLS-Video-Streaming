@@ -246,7 +246,12 @@ const dhtServer = dht.createServer((socket) => {
     });
 
     socket.on("error", (err) => {
-        if (err.code !== "ECONNRESET") {
+        const normalCodes = ['ECONNRESET', 'PREMATURE_CLOSE', 'ERR_STREAM_PREMATURE_CLOSE', 'ECANCELED', 'EPIPE'];
+        const isNormal = err && (
+            normalCodes.includes(err.code) ||
+            (err.message && (err.message.includes('closed') || err.message.includes('Premature close')))
+        );
+        if (!isNormal) {
             console.warn(`[P2P Stream Warning] Peer ${remoteKey.slice(0, 8)}:`, err.message);
         }
     });

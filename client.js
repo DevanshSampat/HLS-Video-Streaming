@@ -66,21 +66,49 @@ if (proxyArgIndex !== -1 && args[proxyArgIndex + 1] && !isNaN(args[proxyArgIndex
 // -------------------------------------------------------------
 // Mode 1: Local HTTP/TCP Proxy Bridge for Standard Web Browsers & Media Players
 // -------------------------------------------------------------
+// Helper to identify standard disconnects/aborts from browsers & players
+function isNormalDisconnect(err) {
+  if (!err) return true;
+  const normalCodes = ['ECONNRESET', 'PREMATURE_CLOSE', 'ERR_STREAM_PREMATURE_CLOSE', 'ECANCELED', 'EPIPE', 'ETIMEDOUT'];
+  if (normalCodes.includes(err.code)) return true;
+  if (err.message && (
+    err.message.includes('Writable stream closed') ||
+    err.message.includes('Readable stream closed') ||
+    err.message.includes('Premature close') ||
+    err.message.includes('socket hang up')
+  )) {
+    return true;
+  }
+  return false;
+}
+
 if (isProxyMode) {
   const proxyServer = net.createServer((clientSocket) => {
     // When a browser or player connects, open a hole-punched DHT stream
     const dhtStream = dht.connect(serverPublicKey);
 
+    // Proactively clean up stream pairs on close without triggering premature close errors
+    clientSocket.on('close', () => {
+      if (!dhtStream.destroyed) dhtStream.destroy();
+    });
+
+    dhtStream.on('close', () => {
+      if (!clientSocket.destroyed) clientSocket.destroy();
+    });
+
     dhtStream.on('error', (err) => {
-      // Suppress normal peer disconnect errors
-      if (err.code !== 'ECONNRESET') {
+      // Suppress normal peer/player disconnect errors and stream aborts
+      if (!isNormalDisconnect(err)) {
         console.warn('[Proxy Error] DHT stream error:', err.message);
       }
-      clientSocket.destroy();
+      if (!clientSocket.destroyed) clientSocket.destroy();
     });
 
     clientSocket.on('error', (err) => {
-      dhtStream.destroy();
+      if (!isNormalDisconnect(err)) {
+        console.warn('[Proxy Error] Client socket error:', err.message);
+      }
+      if (!dhtStream.destroyed) dhtStream.destroy();
     });
 
     // Bidirectional piping between local TCP player and remote hole-punched DHT stream
