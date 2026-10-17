@@ -1843,7 +1843,7 @@ app.get("/watch-details", (req, res) => {
 app.get("/device-name", (req, res) => {
     res.json({
         name: os.hostname().split(".")[0],
-        url: globalUrl,
+        url: `http://${localIpAddress}:9000`,
         dhtKey: serverPublicKey,
         p2p: true
     });
