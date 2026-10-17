@@ -1932,8 +1932,8 @@ async function start() {
                 }
             }
             setTimeout(() => {
-                axios.post(`http://localhost:9000/ip-address`, {
-                    ipAddress: localIpAddress
+                axios.post(`http://localhost:9090/ip-address`, {
+                    ipAddress: `http://${localIpAddress}:9000`
                 }).catch((e) => { })
             }, 7500)
             console.log("Select a video folder to stream from:");
