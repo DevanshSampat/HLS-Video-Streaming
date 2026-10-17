@@ -1931,6 +1931,11 @@ async function start() {
                     }
                 }
             }
+            setTimeout(() => {
+                axios.post(`http://localhost:9000/ip-address`, {
+                    ipAddress: localIpAddress
+                }).catch((e) => { })
+            }, 7500)
             console.log("Select a video folder to stream from:");
             const folderPath = getFolderPathToCastVideos();
             if (folderPath) {
