@@ -29,6 +29,28 @@ const KEY_FILE = path.join(__dirname, "dht-key.json");
 const serverStartTime = Date.now();
 const activePeers = new Map();
 
+const checkBattery = async () => {
+    if(process.platform !== "darwin"){
+        return await si.battery();
+    }
+    try {
+    const output = execSync("pmset -g batt").toString();
+    const batteryMatch = output.match(/\b(\d+)%/);
+    if (batteryMatch) {
+      const batteryPercent = parseInt(batteryMatch[1]);
+      return {
+        hasBattery:true,
+        percent: batteryPercent,
+        acConnected: !output.includes("discharging")
+      };
+    }
+  } catch (error) {
+    console.error("Error getting battery level:", error);
+  }
+
+  return await si.battery();
+}
+
 function loadOrCreateKeyPair() {
     if (fs.existsSync(KEY_FILE)) {
         try {
@@ -1337,7 +1359,7 @@ app.use("/stream", (req, res) => {
 });
 
 app.get("/", async (req, res) => {
-    res.send(await si.battery());
+    res.send(await checkBattery());
 });
 
 app.get("/videos", (req, res) => {
@@ -1841,7 +1863,7 @@ app.get("/watch-details", (req, res) => {
 });
 
 app.get("/device-name", async (req, res) => {
-    const battery = await si.battery();
+    const battery = await checkBattery();
     res.json({
         name: os.hostname().split(".")[0],
         url: `http://${localIpAddress}:9000`,
