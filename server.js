@@ -1840,12 +1840,15 @@ app.get("/watch-details", (req, res) => {
     }
 });
 
-app.get("/device-name", (req, res) => {
+app.get("/device-name", async (req, res) => {
+    const battery = await si.battery();
     res.json({
         name: os.hostname().split(".")[0],
         url: `http://${localIpAddress}:9000`,
         dhtKey: serverPublicKey,
-        p2p: true
+        p2p: true,
+        battery: battery.hasBattery ? battery.percent : 100,
+        charging: battery.acConnected
     });
 });
 
