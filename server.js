@@ -1816,7 +1816,7 @@ app.post("/watch-details", (req, res) => {
         duration: Number(rawData[1]),
         audioTrack: Number(rawData[2] || 0)
     }
-    if (data.position === 0) {
+    if (data.position === 0 || data.duration - data.position < 5000) {
         if (fs.existsSync(path.join(__dirname, 'user_watch_data', body.firebaseUid, fileName))) {
             fs.unlinkSync(path.join(__dirname, 'user_watch_data', body.firebaseUid, fileName))
         }
