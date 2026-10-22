@@ -23,6 +23,15 @@ async function runTests() {
   app.get('/videos', (req, res) => res.json([
     { name: 'test-video.mp4', path: 'streams/test-video/master.m3u8', subtitle: true }
   ]));
+  app.get('/api/large-chunk.ts', (req, res) => {
+    const size = 20 * 1024 * 1024; // 20 MB (exceeds 16MB atomic write limit)
+    res.writeHead(200, {
+      'Content-Type': 'video/mp2t',
+      'Content-Length': size,
+      'Connection': 'close'
+    });
+    res.end(Buffer.alloc(size));
+  });
 
   const httpServer = http.createServer(app);
 
@@ -30,6 +39,7 @@ async function runTests() {
   const serverDht = new HyperDHT({ port: 0 });
   const serverKeyPair = HyperDHT.keyPair();
 
+  const P2P_FRAME_SIZE = 2 * 1024 * 1024;
   const dhtServer = serverDht.createServer((socket) => {
     if (!socket.setNoDelay) socket.setNoDelay = () => socket;
     if (!socket.setKeepAlive) socket.setKeepAlive = () => socket;
@@ -37,12 +47,41 @@ async function runTests() {
     socket.remoteAddress = socket.remotePublicKey ? socket.remotePublicKey.toString('hex') : 'peer';
     socket.encrypted = true;
     socket.on('error', () => {});
+
+    const origWrite = socket.write.bind(socket);
+    socket.write = function (data, encoding, cb) {
+      if (typeof encoding === 'function') {
+        cb = encoding;
+        encoding = null;
+      }
+      if (Buffer.isBuffer(data) && data.length > P2P_FRAME_SIZE) {
+        let offset = 0;
+        let ret = true;
+        while (offset < data.length) {
+          const nextOffset = Math.min(offset + P2P_FRAME_SIZE, data.length);
+          ret = origWrite(data.subarray(offset, nextOffset));
+          offset = nextOffset;
+        }
+        if (typeof cb === 'function') process.nextTick(cb);
+        return ret;
+      }
+      const ret = origWrite(data);
+      if (typeof cb === 'function') process.nextTick(cb);
+      return ret;
+    };
+
+    socket.on('drain', () => {
+      if (socket._httpMessage) {
+        socket._httpMessage.emit('drain');
+      }
+    });
+
     httpServer.emit('connection', socket);
   });
 
   await dhtServer.listen(serverKeyPair);
   const serverKey = serverKeyPair.publicKey.toString('hex');
-  console.log(`✅ [1/4] Server listening on HyperDHT: ${serverKey.slice(0, 16)}...`);
+  console.log(`✅ [1/5] Server listening on HyperDHT: ${serverKey.slice(0, 16)}...`);
 
   // 3. Setup Client DHT Node
   const clientDht = new HyperDHT({ port: 0 });
@@ -106,19 +145,19 @@ async function runTests() {
   }
 
   // Test 1: Direct GET /api/ping over hole-punched stream
-  console.log('📡 [2/4] Testing direct GET /api/ping over DHT stream...');
+  console.log('📡 [2/5] Testing direct GET /api/ping over DHT stream...');
   const pingResponse = await requestDHT('GET', '/api/ping');
   if (!pingResponse.pong) throw new Error('Expected { pong: true }');
-  console.log('✅ [2/4] Direct P2P GET /api/ping succeeded!');
+  console.log('✅ [2/5] Direct P2P GET /api/ping succeeded!');
 
   // Test 2: Direct GET /videos over DHT stream
-  console.log('📡 [3/4] Testing direct GET /videos over DHT stream...');
+  console.log('📡 [3/5] Testing direct GET /videos over DHT stream...');
   const videosResponse = await requestDHT('GET', '/videos');
   if (!Array.isArray(videosResponse) || videosResponse.length === 0) throw new Error('Videos response invalid');
-  console.log('✅ [3/4] Direct P2P GET /videos succeeded! Found video entries.');
+  console.log('✅ [3/5] Direct P2P GET /videos succeeded! Found video entries.');
 
   // Test 3: Local TCP Proxy Bridge
-  console.log('📡 [4/4] Testing local HTTP browser proxy bridge...');
+  console.log('📡 [4/5] Testing local HTTP browser proxy bridge...');
   const proxy = net.createServer((tcpSocket) => {
     const dhtStream = clientDht.connect(serverKeyPair.publicKey, connectOpts);
     dhtStream.on('error', () => tcpSocket.destroy());
@@ -144,7 +183,22 @@ async function runTests() {
   });
 
   if (!proxyRes.pong) throw new Error('Proxy failed to relay response');
-  console.log('✅ [4/4] Local TCP browser proxy bridge successfully relayed HTTP traffic!');
+  console.log('✅ [4/5] Local TCP browser proxy bridge successfully relayed HTTP traffic!');
+
+  // Test 4: Transfer large chunk (> 16MB) over P2P
+  console.log('📡 [5/5] Testing 20MB 4K chunk streaming over P2P (exceeds 16MB atomic limit)...');
+  const largeChunkBytes = await new Promise((resolve, reject) => {
+    http.get(`http://127.0.0.1:${proxyPort}/api/large-chunk.ts`, (res) => {
+      let bytes = 0;
+      res.on('data', chunk => { bytes += chunk.length; });
+      res.on('end', () => resolve(bytes));
+    }).on('error', reject);
+  });
+
+  if (largeChunkBytes !== 20 * 1024 * 1024) {
+    throw new Error(`Expected 20971520 bytes, but received ${largeChunkBytes} bytes`);
+  }
+  console.log(`✅ [5/5] Successfully streamed ${largeChunkBytes} bytes (20MB) over P2P!`);
 
   // Cleanup
   proxy.close();
@@ -152,7 +206,7 @@ async function runTests() {
   await serverDht.destroy();
   await clientDht.destroy();
 
-  console.log('\n🎉 ALL P2P HOLE-PUNCHING TESTS PASSED SUCCESSFULLY!\n');
+  console.log('\n🎉 ALL P2P HOLE-PUNCHING TESTS (INCLUDING 20MB 4K STREAMING) PASSED SUCCESSFULLY!\n');
   process.exit(0);
 }
 

@@ -275,11 +275,25 @@ const dhtServer = dht.createServer({
     socket.cork = () => { };
     socket.uncork = () => { };
 
+    const P2P_FRAME_SIZE = 2 * 1024 * 1024; // 2 MB safe frame size (well below HyperDHT 16 MB atomic write limit)
     const origWrite = socket.write.bind(socket);
     socket.write = function (data, encoding, cb) {
         if (typeof encoding === 'function') {
             cb = encoding;
             encoding = null;
+        }
+        if (Buffer.isBuffer(data) && data.length > P2P_FRAME_SIZE) {
+            let offset = 0;
+            let ret = true;
+            while (offset < data.length) {
+                const nextOffset = Math.min(offset + P2P_FRAME_SIZE, data.length);
+                ret = origWrite(data.subarray(offset, nextOffset));
+                offset = nextOffset;
+            }
+            if (typeof cb === 'function') {
+                process.nextTick(cb);
+            }
+            return ret;
         }
         const ret = origWrite(data);
         if (typeof cb === 'function') {
@@ -1209,16 +1223,28 @@ async function handleStreamRecordingCommon(req, res, recSubPath) {
     const filePath = path.join(recordingsDir, filename);
 
     if (fs.existsSync(filePath)) {
-        if (filename.endsWith(".m3u8") || filename.endsWith(".ts")) {
+        if (filename.endsWith(".m3u8")) {
             const buffer = fs.readFileSync(filePath);
-            const contentType = filename.endsWith(".m3u8") ? "application/vnd.apple.mpegurl" : "video/mp2t";
             res.writeHead(200, {
-                "Content-Type": contentType,
+                "Content-Type": "application/vnd.apple.mpegurl",
                 "Content-Length": buffer.length,
                 "Access-Control-Allow-Origin": "*",
                 "Connection": "keep-alive"
             });
             return res.end(buffer);
+        } else if (filename.endsWith(".ts")) {
+            const stat = fs.statSync(filePath);
+            res.writeHead(200, {
+                "Content-Type": "video/mp2t",
+                "Content-Length": stat.size,
+                "Access-Control-Allow-Origin": "*",
+                "Connection": "keep-alive"
+            });
+            const stream = fs.createReadStream(filePath);
+            stream.on("error", () => {
+                if (!res.destroyed) res.destroy();
+            });
+            return stream.pipe(res);
         }
         return serveVideoFileWithRange(req, res, filePath, "video/mp4");
     }
@@ -1329,19 +1355,31 @@ app.use("/stream", (req, res) => {
             .join(__dirname, decodeURIComponent(req.path))
             .replaceAll("\\", "/");
         if (fs.existsSync(filePath)) {
-            const contentType = filePath.endsWith(".m3u8")
-                ? "application/vnd.apple.mpegurl"
-                : "video/mp2t";
-            const buffer = fs.readFileSync(filePath);
-            res.writeHead(200, {
-                "Content-Type": contentType,
-                "Content-Length": buffer.length,
-                "Access-Control-Allow-Origin": "*",
-                "Connection": "keep-alive"
-            });
-            res.end(buffer);
-            if (filePath.endsWith(".ts")) {
-                prefetchNextSegments(filePath);
+            if (filePath.endsWith(".m3u8")) {
+                const buffer = fs.readFileSync(filePath);
+                res.writeHead(200, {
+                    "Content-Type": "application/vnd.apple.mpegurl",
+                    "Content-Length": buffer.length,
+                    "Access-Control-Allow-Origin": "*",
+                    "Connection": "keep-alive"
+                });
+                return res.end(buffer);
+            } else {
+                const stat = fs.statSync(filePath);
+                res.writeHead(200, {
+                    "Content-Type": "video/mp2t",
+                    "Content-Length": stat.size,
+                    "Access-Control-Allow-Origin": "*",
+                    "Connection": "keep-alive"
+                });
+                const stream = fs.createReadStream(filePath);
+                stream.on("error", () => {
+                    if (!res.destroyed) res.destroy();
+                });
+                stream.pipe(res);
+                if (filePath.endsWith(".ts")) {
+                    prefetchNextSegments(filePath);
+                }
             }
         } else res.status(404).send("File not found");
     } else {
