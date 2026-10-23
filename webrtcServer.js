@@ -213,11 +213,14 @@ class WebRtcServer {
     });
   }
 
-  forwardRequestToLocalHttp(sessionId, dc, reqData) {
+  forwardRequestToLocalHttp(sessionId, dc, reqData, attempt = 0) {
     const { id, method = 'GET', url, headers = {}, body = null } = reqData;
 
+    const hostnames = ['localhost', '127.0.0.1'];
+    const currentHost = hostnames[attempt % hostnames.length];
+
     // Filter headers that might conflict with localhost loopback
-    const forwardHeaders = { ...headers, host: '127.0.0.1' };
+    const forwardHeaders = { ...headers, host: `${currentHost}:${this.localPort}` };
     delete forwardHeaders['content-length'];
 
     let bodyBuffer = null;
@@ -227,7 +230,7 @@ class WebRtcServer {
     }
 
     const httpReq = http.request({
-      hostname: '127.0.0.1',
+      hostname: currentHost,
       port: this.localPort,
       path: url,
       method: method.toUpperCase(),
@@ -281,6 +284,10 @@ class WebRtcServer {
     });
 
     httpReq.on('error', (err) => {
+      if (err.code === 'ECONNREFUSED' && attempt < hostnames.length - 1) {
+        console.warn(`[WebRTC HTTP Forward] ${currentHost} refused connection, retrying with ${hostnames[attempt + 1]}...`);
+        return this.forwardRequestToLocalHttp(sessionId, dc, reqData, attempt + 1);
+      }
       console.warn(`[WebRTC HTTP Forward Error] ${url}:`, err.message);
       try {
         dc.sendMessage(JSON.stringify({
