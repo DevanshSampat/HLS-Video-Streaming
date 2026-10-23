@@ -11,6 +11,7 @@ const e = require("express");
 const http = require("http");
 const { default: axios } = require("axios");
 const HyperDHT = require("hyperdht");
+const webrtcServer = require("./webrtcServer");
 const httpPort = 6969;
 let serverIpAddressResponse;
 let lastRequestTime = {};
@@ -1867,6 +1868,7 @@ app.post("/watch-details", (req, res) => {
 
 app.get("/watch-details", (req, res) => {
     const body = req.query;
+    console.log(body.videoId);
     if (!body.firebaseUid) {
         res.statusCode = 400;
         res.contentType = "application/json";
@@ -1891,9 +1893,17 @@ app.get("/watch-details", (req, res) => {
         .replaceAll("/", "")
         .split("?")[0] + ".json";
 
+    console.log({
+        firebaseUid: body.firebaseUid,
+        fileName,
+        filePath: path.join(__dirname, "user_watch_data", body.firebaseUid, fileName),
+        fileExists: fs.existsSync(path.join(__dirname, "user_watch_data", body.firebaseUid, fileName))
+    });
+
     if (fs.existsSync(path.join(__dirname, "user_watch_data", body.firebaseUid, fileName))) {
         const data = JSON.parse(fs.readFileSync(path.join(__dirname, "user_watch_data", body.firebaseUid, fileName)))
         const finalData = `${data.position}\t${data.duration}\t${data.audioTrack}`
+        console.log({finalData})
         res.json({ status: "successful", data: finalData });
     } else {
         res.json({ status: "successful", data: "0\t1\t0" })
@@ -1907,6 +1917,7 @@ app.get("/device-name", async (req, res) => {
         url: `http://${localIpAddress}:9000`,
         dhtKey: serverPublicKey,
         p2p: true,
+        webrtc: true,
         battery: battery.hasBattery ? battery.percent : 100,
         charging: battery.acConnected
     });
@@ -1916,6 +1927,7 @@ app.post("/stop", async (req, res) => {
     res.send("ok");
     deleteChunkedFiles();
     try {
+        webrtcServer.stop();
         for (const [key, { socket }] of activePeers.entries()) {
             socket.destroy();
         }
@@ -1931,9 +1943,9 @@ app.post("/stop", async (req, res) => {
 function printBanner() {
     const line = "═".repeat(74);
     console.log("\n" + line);
-    console.log("  🚀 P2P HOLE-PUNCHED VIDEO STREAMING SERVER IS ONLINE (HYPERDHT)");
+    console.log("  🚀 P2P HOLE-PUNCHED VIDEO STREAMING SERVER IS ONLINE (HYPERDHT + WEBRTC)");
     console.log(line);
-    console.log("  🔒 Protocol:        HyperDHT (Noise Protocol + UDP Hole-Punching)");
+    console.log("  🔒 Protocols:       HyperDHT (Apps) & WebRTC DataChannel (Web Browsers)");
     console.log("  🌍 Traversal:       Works across global NATs, firewalls & CGNAT");
     console.log("  🔑 Global DHT Key:  " + serverPublicKey);
     console.log(`  💻 Local PC:        http://localhost:${PORT}`);
@@ -1946,18 +1958,17 @@ function printBanner() {
     console.log(line);
     console.log("  📡 HOW CLIENTS CONNECT FROM ANYWHERE IN THE WORLD:");
     console.log("");
-    console.log("  1. Browse & Stream in any PC/Mac browser or video player (Proxy bridge):");
-    console.log(`     node client.js ${serverPublicKey} --proxy 8080`);
-    console.log("     Then open http://localhost:8080 in Chrome, Safari, VLC, etc.");
+    console.log("  1. Modern Web Browsers (Chrome, Safari, Firefox, Edge, iOS, Android):");
+    console.log("     Open StreamVilla Web App -> Connects DIRECTLY via WebRTC (Zero proxy needed!)");
     console.log("");
-    console.log("  2. Direct CLI Request / Video Index:");
+    console.log("  2. Native Apps (Android / Mobile):");
+    console.log(`     Connect directly to DHT Key: ${serverPublicKey}`);
+    console.log("");
+    console.log("  3. Direct CLI Request / Video Index:");
     console.log(`     node client.js ${serverPublicKey} /videos`);
     console.log("");
-    console.log("  3. Measure P2P Roundtrip Latency:");
+    console.log("  4. Measure P2P Roundtrip Latency:");
     console.log(`     node client.js ${serverPublicKey} --ping`);
-    console.log("");
-    console.log("  4. Mobile / Native Apps (via HyperDHT client):");
-    console.log(`     Connect directly to DHT Key: ${serverPublicKey}`);
     console.log(line + "\n");
 }
 
@@ -1966,7 +1977,10 @@ async function start() {
         // 1. Listen on HyperDHT network for global P2P hole-punching
         await dhtServer.listen(keyPair);
 
-        // 2. Listen on local port
+        // 2. Start WebRTC server for direct web browser connectivity
+        webrtcServer.start(PORT, serverPublicKey);
+
+        // 3. Listen on local port
         httpServer.listen(PORT, "0.0.0.0", async () => {
             globalUrl = serverPublicKey;
             if (serverIpAddressResponse) {
