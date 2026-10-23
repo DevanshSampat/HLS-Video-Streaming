@@ -1643,7 +1643,7 @@ const handleServerDownloadAlertImage = async (req, res) => {
     try {
         const response = await axios.get(
             `http://localhost:5001/api/alerts/download?id=${filename}`,
-            { responseType: "arraybuffer", timeout: 10000 },
+            { responseType: "arraybuffer", timeout: 2000 },
         );
         const buf = Buffer.from(response.data);
         res.writeHead(200, {

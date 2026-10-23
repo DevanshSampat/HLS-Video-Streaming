@@ -31,6 +31,7 @@ class WebRtcClient {
     this.reqCounter = 0;
     this.pendingCandidates = [];
     this.hasRemoteDescription = false;
+    this.connectingPromise = null;
   }
 
   isSupported() {
@@ -64,6 +65,12 @@ class WebRtcClient {
       return true;
     }
 
+    // Reuse in-flight connection promise if already connecting to the same target DHT key
+    if (this.status === 'connecting' && this.dhtKey === targetDhtKey && this.connectingPromise) {
+      console.log('[WebRTC P2P] Reusing active connection attempt for key:', targetDhtKey.slice(0, 16));
+      return this.connectingPromise;
+    }
+
     this.disconnect();
     this.dhtKey = targetDhtKey;
     this.sessionId = `br_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
@@ -71,23 +78,32 @@ class WebRtcClient {
     this.hasRemoteDescription = false;
     this.pendingCandidates = [];
 
-    return new Promise((resolve) => {
+    this.connectingPromise = new Promise((resolve) => {
       let resolved = false;
       const timeout = setTimeout(() => {
         if (!resolved && this.status !== 'connected') {
           resolved = true;
+          this.connectingPromise = null;
           this.setStatus('error', 'WebRTC connection to PC timed out. Make sure StreamVilla is running on your PC.');
           resolve(false);
         }
       }, 15000);
 
-      this.initPeerConnection(resolve, () => {
-        if (!resolved) {
-          resolved = true;
-          clearTimeout(timeout);
+      this.initPeerConnection(
+        (val) => {
+          this.connectingPromise = null;
+          resolve(val);
+        },
+        () => {
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timeout);
+          }
         }
-      });
+      );
     });
+
+    return this.connectingPromise;
   }
 
   initPeerConnection(finalResolve, markResolved) {
@@ -140,15 +156,23 @@ class WebRtcClient {
         }
 
         try {
+          let offerPublished = false;
+          const pendingLocalCandidates = [];
+
           // Listen for local ICE candidates to forward to PC
           this.pc.onicecandidate = (event) => {
             if (event.candidate && mqttClient.connected) {
-              mqttClient.publish(browserCandidateTopic, JSON.stringify({
+              const candPayload = JSON.stringify({
                 sessionId: this.sessionId,
                 type: 'candidate',
                 candidate: event.candidate.candidate,
                 mid: event.candidate.sdpMid
-              }));
+              });
+              if (!offerPublished) {
+                pendingLocalCandidates.push(candPayload);
+              } else {
+                mqttClient.publish(browserCandidateTopic, candPayload);
+              }
             }
           };
 
@@ -195,7 +219,13 @@ class WebRtcClient {
             sessionId: this.sessionId,
             type: 'offer',
             sdp: offer.sdp
-          }));
+          }), () => {
+            offerPublished = true;
+            for (const candMsg of pendingLocalCandidates) {
+              mqttClient.publish(browserCandidateTopic, candMsg);
+            }
+            pendingLocalCandidates.length = 0;
+          });
         } catch (offerErr) {
           console.error('[WebRTC Signaling] Failed to create offer:', offerErr);
           markResolved();
@@ -250,7 +280,16 @@ class WebRtcClient {
     });
   }
 
-  handleIncomingMessage(data) {
+  async handleIncomingMessage(data) {
+    if (typeof Blob !== 'undefined' && data instanceof Blob) {
+      try {
+        data = await data.arrayBuffer();
+      } catch (e) {
+        console.warn('[WebRTC Data] Failed to convert Blob to ArrayBuffer:', e);
+        return;
+      }
+    }
+
     if (typeof data === 'string') {
       try {
         const msg = JSON.parse(data);
@@ -281,6 +320,10 @@ class WebRtcClient {
             ok: (req.responseInfo ? req.responseInfo.statusCode : 200) >= 200 && (req.responseInfo ? req.responseInfo.statusCode : 200) < 300,
             headers: req.responseInfo ? req.responseInfo.headers : {},
             arrayBuffer: async () => merged.buffer,
+            blob: async () => {
+              const contentType = (req.responseInfo && req.responseInfo.headers && req.responseInfo.headers['content-type']) || 'image/jpeg';
+              return new Blob([merged], { type: contentType });
+            },
             text: async () => new TextDecoder().decode(merged),
             json: async () => JSON.parse(new TextDecoder().decode(merged)),
             data: merged
@@ -316,7 +359,14 @@ class WebRtcClient {
    * @returns {Promise<Response>}
    */
   request(url, options = {}) {
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
+      // If we are currently negotiating, wait for connection
+      if (this.status === 'connecting' && this.connectingPromise) {
+        try {
+          await this.connectingPromise;
+        } catch (e) {}
+      }
+
       if (!this.dc || this.dc.readyState !== 'open') {
         return reject(new Error('WebRTC DataChannel is not open'));
       }
@@ -374,6 +424,21 @@ class WebRtcClient {
   }
 
   /**
+   * Fetch binary asset (e.g. CCTV alert image) over WebRTC and return an Object URL
+   * @param {string} url
+   * @param {number} timeoutMs
+   * @returns {Promise<string>} Blob Object URL (blob:http://...)
+   */
+  async getBlobUrl(url, timeoutMs = 30000) {
+    const res = await this.request(url, { timeoutMs });
+    if (!res.ok) {
+      throw new Error(`Failed to load ${url}: status ${res.status}`);
+    }
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  }
+
+  /**
    * Create an Hls.js compatible custom Loader class
    */
   createHlsLoader() {
@@ -383,25 +448,44 @@ class WebRtcClient {
       constructor(config) {
         this.config = config;
         this.stats = {
-          trequest: 0,
-          tfirst: 0,
-          tload: 0,
+          aborted: false,
           loaded: 0,
-          total: 0
+          retry: 0,
+          total: 0,
+          chunkCount: 0,
+          bwEstimate: 0,
+          loading: { start: 0, first: 0, end: 0 },
+          parsing: { start: 0, end: 0 },
+          buffering: { start: 0, first: 0, end: 0 }
         };
       }
 
-      destroy() {}
+      destroy() {
+        this.abort();
+      }
 
-      abort() {}
+      abort() {
+        this.stats.aborted = true;
+      }
 
       load(context, config, callbacks) {
-        this.stats.trequest = performance.now();
+        const now = performance.now();
+        this.stats.loading.start = now;
 
-        client.request(context.url)
+        client.request(context.url, { timeoutMs: config.timeout || 30000 })
           .then(async (res) => {
-            this.stats.tfirst = performance.now();
-            this.stats.tload = performance.now();
+            if (this.stats.aborted) return;
+
+            this.stats.loading.first = performance.now();
+
+            if (!res.ok) {
+              const errResp = {
+                code: res.status || 500,
+                text: `HTTP error ${res.status}`
+              };
+              callbacks.onError(errResp, context, null, this.stats);
+              return;
+            }
 
             let data;
             if (context.responseType === 'arraybuffer') {
@@ -414,14 +498,24 @@ class WebRtcClient {
               this.stats.total = data.length;
             }
 
-            callbacks.onSuccess({
+            this.stats.loading.end = performance.now();
+
+            const loaderResponse = {
               url: context.url,
-              data: data
-            }, this.stats, context);
+              data: data,
+              code: res.status || 200
+            };
+
+            callbacks.onSuccess(loaderResponse, this.stats, context, null);
           })
           .catch((err) => {
+            if (this.stats.aborted) return;
             console.warn(`[WebRTC HLS Loader] Error loading ${context.url}:`, err.message);
-            callbacks.onError(err, context);
+            const errResp = {
+              code: err.code || 0,
+              text: err.message || 'Network error'
+            };
+            callbacks.onError(errResp, context, null, this.stats);
           });
       }
     };
@@ -447,6 +541,7 @@ class WebRtcClient {
       this.mqttClient = null;
     }
 
+    this.connectingPromise = null;
     this.setStatus('disconnected');
   }
 }

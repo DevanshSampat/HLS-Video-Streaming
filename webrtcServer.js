@@ -21,7 +21,7 @@ const SIGNALING_BROKERS = [
   'wss://broker.hivemq.com:8884/mqtt'
 ];
 
-const MAX_CHUNK_SIZE = 64 * 1024; // 64KB SCTP packet size limit
+const MAX_CHUNK_SIZE = 16 * 1024; // 16KB safe SCTP chunk size
 
 class WebRtcServer {
   constructor() {
