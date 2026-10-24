@@ -31,25 +31,25 @@ const serverStartTime = Date.now();
 const activePeers = new Map();
 
 const checkBattery = async () => {
-    if(process.platform !== "darwin"){
+    if (process.platform !== "darwin") {
         return await si.battery();
     }
     try {
-    const output = execSync("pmset -g batt").toString();
-    const batteryMatch = output.match(/\b(\d+)%/);
-    if (batteryMatch) {
-      const batteryPercent = parseInt(batteryMatch[1]);
-      return {
-        hasBattery:true,
-        percent: batteryPercent,
-        acConnected: !output.includes("discharging")
-      };
+        const output = execSync("pmset -g batt").toString();
+        const batteryMatch = output.match(/\b(\d+)%/);
+        if (batteryMatch) {
+            const batteryPercent = parseInt(batteryMatch[1]);
+            return {
+                hasBattery: true,
+                percent: batteryPercent,
+                acConnected: !output.includes("discharging")
+            };
+        }
+    } catch (error) {
+        console.error("Error getting battery level:", error);
     }
-  } catch (error) {
-    console.error("Error getting battery level:", error);
-  }
 
-  return await si.battery();
+    return await si.battery();
 }
 
 function loadOrCreateKeyPair() {
@@ -167,7 +167,11 @@ const deleteChunkedFiles = () => {
             .filter((c) => c.endsWith(".ts"));
         if (chunks.length > 0) console.log(`Deleting chunks for video: ${f}`);
         for (let i = 0; i < chunks.length; i++) {
-            fs.unlinkSync(path.join(__dirname, "streams", f, chunks[i]));
+            try {
+                fs.unlinkSync(path.join(__dirname, "streams", f, chunks[i]));
+            } catch (error) {
+                console.log(error);
+            }
         }
     });
 };
@@ -353,6 +357,19 @@ const files = fs.existsSync(path.join(__dirname, "streams"))
     ? fs.readdirSync(path.join(__dirname, "streams"))
     : [];
 files.forEach((f) => {
+    if (f === "android-screen-sharing") {
+        const files = fs.readdirSync(path.join(__dirname, "streams", f));
+        files.forEach((streamFile) => {
+            if (streamFile.startsWith("stream")) {
+                try {
+                    fs.unlinkSync(path.join(__dirname, "streams", f, streamFile));
+                } catch (error) {
+                    console.log(error)
+                }
+            }
+        })
+        return;
+    }
     if (!fs.existsSync(path.join(__dirname, "streams", f, "createdAt.txt"))) {
         deleteFolderRecursive(path.join(__dirname, "streams", f));
         console.log(`🗑️  Deleted incomplete stream directory: ${f}`);
@@ -1329,7 +1346,7 @@ app.use("/stream", async (req, res, next) => {
                     }
                 }
             }
-        } else if (filePath.endsWith(".ts")) {
+        } else if (filePath.endsWith(".ts") && !id.includes("android-screen-sharing")) {
             const parsed = parseSegmentPath(filePath);
             if (parsed && parsed.type === "video") {
                 cachedPreferredQuality[id] = parsed.height || 144;
@@ -1464,6 +1481,13 @@ app.get("/videos", (req, res) => {
             coverImage: alertExists
                 ? (requestBaseUrl ? `${requestBaseUrl}/alerts/image/${alertFilename}` : `/alerts/image/${alertFilename}`)
                 : undefined,
+            subtitle: false,
+        });
+    }
+    if (fs.existsSync(path.join(__dirname, "streams", "android-screen-sharing", "master.m3u8"))) {
+        response.unshift({
+            name: "Android Device Screen",
+            path: "streams/android-screen-sharing/master.m3u8",
             subtitle: false,
         });
     }
@@ -1903,7 +1927,7 @@ app.get("/watch-details", (req, res) => {
     if (fs.existsSync(path.join(__dirname, "user_watch_data", body.firebaseUid, fileName))) {
         const data = JSON.parse(fs.readFileSync(path.join(__dirname, "user_watch_data", body.firebaseUid, fileName)))
         const finalData = `${data.position}\t${data.duration}\t${data.audioTrack}`
-        console.log({finalData})
+        console.log({ finalData })
         res.json({ status: "successful", data: finalData });
     } else {
         res.json({ status: "successful", data: "0\t1\t0" })
