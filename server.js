@@ -137,6 +137,28 @@ if (fs.existsSync(path.join(__dirname, "userPreferences.json"))) {
     ).streamLocally;
 }
 
+function getChunkDuration() {
+    try {
+        const prefPath = path.join(__dirname, "userPreferences.json");
+        if (fs.existsSync(prefPath)) {
+            const userPreferences = JSON.parse(
+                fs.readFileSync(prefPath, "utf8"),
+            );
+            if (
+                userPreferences &&
+                userPreferences.chunkDuration !== undefined &&
+                userPreferences.chunkDuration !== null &&
+                !isNaN(Number(userPreferences.chunkDuration))
+            ) {
+                return Number(userPreferences.chunkDuration);
+            }
+        }
+    } catch (e) {
+        console.error("Error reading chunkDuration from userPreferences.json:", e);
+    }
+    return 12;
+}
+
 const deleteFolderRecursive = (dirPath) => {
     if (fs.existsSync(dirPath)) {
         fs.readdirSync(dirPath).forEach(function (file) {
@@ -652,11 +674,12 @@ async function prepareAllM3u8Files() {
             fs.writeFileSync(masterPlaylistPath, masterContent);
 
             // Write audio playlists
-            const segmentTime = 12;
+            const segmentTime = getChunkDuration();
+            console.log({ segmentTime })
             const segmentCount = Math.ceil(duration / segmentTime);
 
             audioTracks.forEach((t) => {
-                let playlist = `#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:12\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n`;
+                let playlist = `#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:${segmentTime}\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n`;
                 for (let i = 0; i < segmentCount; i++) {
                     let curDur = segmentTime;
                     if (i === segmentCount - 1) {
@@ -670,7 +693,7 @@ async function prepareAllM3u8Files() {
 
             // Write video playlists
             validQualities.forEach((q) => {
-                const videoSegmentTime = 12;
+                const videoSegmentTime = segmentTime;
                 const videoSegmentCount = Math.ceil(duration / videoSegmentTime);
                 let playlist = `#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:${videoSegmentTime}\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n`;
                 for (let i = 0; i < videoSegmentCount; i++) {
@@ -851,7 +874,7 @@ function prefetchNextSegments(filePath) {
             if (parsed.type === "video") {
                 // 1. Fetch the requested quality first (upcoming 1 minutes)
                 const requestedPrefix = `video_${parsed.height}p`;
-                const videoSegmentTime = 12;
+                const videoSegmentTime = getChunkDuration();
                 const prefetchCount = Math.ceil(60 / videoSegmentTime);
 
                 pruneQueueForQuality(
@@ -878,7 +901,8 @@ function prefetchNextSegments(filePath) {
                     }
                 }
             } else if (parsed.type === "audio") {
-                const prefetchCount = Math.ceil(120 / 12);
+                const audioSegmentTime = getChunkDuration();
+                const prefetchCount = Math.ceil(120 / audioSegmentTime);
                 pruneQueueForQuality(
                     dirPath,
                     "audio",
@@ -973,7 +997,7 @@ async function performTranscode(filePath, onCmdReady) {
     let streamIndex;
     let ffmpegParams = [];
     let segmentIndex;
-    let segmentTime = 12;
+    let segmentTime = getChunkDuration();
 
     if (isVideo) {
         const match = fileName.match(/video_(\d+)p_(\d+)\.ts/);
@@ -1440,7 +1464,7 @@ app.get("/videos", (req, res) => {
         isDirectConnection = peerIpRegistry[ip].startsWith("192.168.");
     }
     let streamSingleQualityRemotely = false;
-    let streamSingleQualityLocally = true;
+    let streamSingleQualityLocally = false;
     let forceStreamSingleQuality = false;
     if (fs.existsSync(path.join(__dirname, "userPreferences.json"))) {
         const userPreferences = JSON.parse(
@@ -1449,7 +1473,7 @@ app.get("/videos", (req, res) => {
         streamSingleQualityRemotely =
             userPreferences.streamSingleQualityRemotely || false;
         streamSingleQualityLocally =
-            userPreferences.streamSingleQualityLocally ?? true;
+            userPreferences.streamSingleQualityLocally || false;
         forceStreamSingleQuality =
             userPreferences.forceStreamSingleQuality || false;
     }

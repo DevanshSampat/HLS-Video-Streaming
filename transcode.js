@@ -67,8 +67,32 @@ const ALL_VIDEO_QUALITIES = [
     { height: 2160, bitrate: '15000k' }
 ];
 
+function getChunkDuration() {
+    try {
+        const prefPath = path.join(__dirname, 'userPreferences.json');
+        if (fs.existsSync(prefPath)) {
+            const userPreferences = JSON.parse(
+                fs.readFileSync(prefPath, 'utf8'),
+            );
+            if (
+                userPreferences &&
+                userPreferences.chunkDuration !== undefined &&
+                userPreferences.chunkDuration !== null &&
+                !isNaN(Number(userPreferences.chunkDuration))
+            ) {
+                return Number(userPreferences.chunkDuration);
+            }
+        }
+    } catch (e) {
+        console.error('Error reading chunkDuration from userPreferences.json:', e);
+    }
+    return 12;
+}
+
+const chunkDuration = getChunkDuration();
+
 const COMMON_OPTIONS = [
-    '-hls_time', '12',
+    '-hls_time', `${chunkDuration}`,
     '-hls_list_size', '0',
     '-hls_playlist_type', 'event', // CHANGED: 'event' allows live playback
     '-sn', '-dn', '-map_metadata', '-1',
@@ -96,7 +120,7 @@ function processTrack(input, mapIndex, output, isVideo, opts = {}, metadata, qua
                 '-an', '-c:v', 'libx264', '-vf', `scale=-2:${safeHeight}`,
                 '-b:v', opts.bitrate, '-maxrate', opts.bitrate, '-bufsize', `${parseInt(opts.bitrate) * 2}k`,
                 '-profile:v', 'main', '-pix_fmt', 'yuv420p', '-crf', '23', '-preset', 'veryfast',
-                '-force_key_frames', 'expr:gte(t,n_forced*12)', '-sc_threshold', '0',
+                '-force_key_frames', `expr:gte(t,n_forced*${chunkDuration})`, '-sc_threshold', '0',
                 '-threads', '1'
             );
         } else {

@@ -1,0 +1,234 @@
+@baseUrl = http://localhost:9000
+@videoId = video_id
+@sampleRecording = recording_file_name.mp4
+@sampleAlert = alert_file_name.jpg
+@firebaseUid = firebase_uid
+
+
+# ==============================================================================
+# 1. SYSTEM, HEALTH & P2P DIAGNOSTICS
+# ==============================================================================
+
+### 1.1 Ping Server
+# Returns pong, server timestamp, ISO date, and remote peer IP
+GET {{baseUrl}}/api/ping HTTP/1.1
+
+### 1.2 Full Server Health & Diagnostics Status
+# Returns status, hyperdht traversal info, uptime, memory, peers count, and node version
+GET {{baseUrl}}/api/status HTTP/1.1
+
+### 1.3 Active P2P HyperDHT Peers
+# Returns list of active peers hole-punched into the server
+GET {{baseUrl}}/api/peers HTTP/1.1
+
+### 1.4 Device Name, Battery & Network Info
+# Returns host machine name, local IP URL, DHT public key, and battery level
+GET {{baseUrl}}/device-name HTTP/1.1
+
+### 1.5 Server Root Endpoint
+# Returns battery percentage and AC charger status
+GET {{baseUrl}}/ HTTP/1.1
+
+### 1.6 Echo Endpoint - GET Request
+# Useful to test latency, headers, and query parameter passthrough
+GET {{baseUrl}}/api/echo?test=streamvilla&timestamp=123 HTTP/1.1
+Custom-Header: StreamVilla-Client
+
+### 1.7 Echo Endpoint - POST Request with JSON Body
+POST {{baseUrl}}/api/echo HTTP/1.1
+Content-Type: application/json
+
+{
+  "client": "VSCode REST Client",
+  "action": "testing",
+  "features": ["HLS", "P2P", "WebRTC", "CCTV"]
+}
+
+
+# ==============================================================================
+# 2. VIDEO CATALOG & PROCESSING PROGRESS
+# ==============================================================================
+
+### 2.1 Get Videos List
+# Returns video library with file names, manifest paths, and subtitle availability
+GET {{baseUrl}}/videos HTTP/1.1
+
+### 2.2 Get Videos List (Force Multi-Quality)
+# Requests video list without applying max-quality filter parameters
+GET {{baseUrl}}/videos?forceMultiQuality=true HTTP/1.1
+
+### 2.3 Video Transcoding / Chunking Progress
+# Returns transcoding status and progress percentage per quality tier
+GET {{baseUrl}}/progress HTTP/1.1
+
+### 2.4 Stop Active Video Processing
+# Cancels current transcoding task and cleans up temporary stream directory
+GET {{baseUrl}}/stop-processing HTTP/1.1
+
+
+# ==============================================================================
+# 3. HLS VIDEO STREAMING & PLAYLISTS
+# ==============================================================================
+
+### 3.1 Fetch Master HLS Playlist
+# Returns the top-level master.m3u8 containing all video and audio quality tracks
+GET {{baseUrl}}/stream/streams/{{videoId}}/master.m3u8 HTTP/1.1
+
+### 3.2 Fetch Master HLS Playlist Filtered by Max Quality (e.g. 1080p, 720p, 480p)
+GET {{baseUrl}}/stream/streams/{{videoId}}/master.m3u8?maxQuality=1080 HTTP/1.1
+
+### 3.3 Fetch Quality Specific Video Manifest (144p, 360p, 720p, 1080p, 2160p)
+GET {{baseUrl}}/stream/streams/{{videoId}}/video_144p.m3u8 HTTP/1.1
+
+### 3.4 Fetch Audio Track Manifest
+GET {{baseUrl}}/stream/streams/{{videoId}}/audio_0.m3u8 HTTP/1.1
+
+### 3.5 Fetch HLS Video Transport Stream Segment (.ts)
+# Automatically transcodes on the fly if chunk is not yet cached
+GET {{baseUrl}}/stream/streams/{{videoId}}/video_144p_000.ts HTTP/1.1
+
+### 3.6 Direct Raw Video File Streaming with Byte-Range Support (First 1MB)
+GET {{baseUrl}}/stream/{{videoId}} HTTP/1.1
+Range: bytes=0-1048575
+
+
+# ==============================================================================
+# 4. SUBTITLES & VIDEO DOWNLOADS
+# ==============================================================================
+
+### 4.1 Extract / Download Subtitles (.srt)
+# Automatically extracts subtitle tracks on-the-fly and downloads .srt
+GET {{baseUrl}}/subtitles?id={{videoId}} HTTP/1.1
+
+### 4.2 Download Full Video File (Query Param)
+GET {{baseUrl}}/download?id={{videoId}} HTTP/1.1
+
+### 4.3 Download Full Video File (Path Param)
+GET {{baseUrl}}/download/{{videoId}} HTTP/1.1
+
+### 4.4 Download Full Video File (Stream Path Alias)
+GET {{baseUrl}}/download/streams/{{videoId}} HTTP/1.1
+
+
+# ==============================================================================
+# 5. LIVE CCTV CAMERA STREAMING
+# ==============================================================================
+
+### 5.1 CCTV Live Feed Manifest (Direct Route)
+GET {{baseUrl}}/camera/stream.m3u8 HTTP/1.1
+
+### 5.2 CCTV Live Feed Manifest (Stream Route Alias)
+GET {{baseUrl}}/stream/camera/stream.m3u8 HTTP/1.1
+
+### 5.3 CCTV Video Segment
+# Note: Replace segment filename (e.g. stream6712.ts) with current segment from stream.m3u8
+GET {{baseUrl}}/camera/stream6712.ts HTTP/1.1
+
+
+# ==============================================================================
+# 6. CCTV RECORDINGS
+# ==============================================================================
+
+### 6.1 List All CCTV Recordings
+# Returns list of available MP4 recordings with size, modified timestamps, and URLs
+GET {{baseUrl}}/recordings HTTP/1.1
+
+### 6.2 Stream CCTV Recording with Range Header (Path Param)
+GET {{baseUrl}}/recordings/stream/{{sampleRecording}} HTTP/1.1
+Range: bytes=0-1048575
+
+### 6.3 Stream CCTV Recording with Range Header (Query Param)
+GET {{baseUrl}}/recordings/stream?id={{sampleRecording}} HTTP/1.1
+Range: bytes=0-1048575
+
+### 6.4 Stream CCTV Recording (Direct Path Alias)
+GET {{baseUrl}}/recordings/{{sampleRecording}} HTTP/1.1
+Range: bytes=0-1048575
+
+### 6.5 Stream CCTV Recording (Stream Subpath Alias)
+GET {{baseUrl}}/stream/recordings/{{sampleRecording}} HTTP/1.1
+Range: bytes=0-1048575
+
+### 6.6 Download CCTV Recording (Query Param)
+GET {{baseUrl}}/recordings/download?id={{sampleRecording}} HTTP/1.1
+
+### 6.7 Download CCTV Recording (Path Param)
+GET {{baseUrl}}/recordings/download/{{sampleRecording}} HTTP/1.1
+
+### 6.8 Download CCTV Recording (Download Subpath Alias)
+GET {{baseUrl}}/download/recordings/{{sampleRecording}} HTTP/1.1
+
+
+# ==============================================================================
+# 7. AI HUMAN DETECTION ALERTS & SNAPSHOTS
+# ==============================================================================
+
+### 7.1 List All Detection Alerts
+# Returns alert records with timestamps, filenames, and snapshot sizes
+GET {{baseUrl}}/alerts HTTP/1.1
+
+### 7.2 View / Download Alert Snapshot Image (Direct Path)
+GET {{baseUrl}}/alerts/{{sampleAlert}} HTTP/1.1
+
+### 7.3 View / Download Alert Snapshot Image (/alerts/image/:filename)
+GET {{baseUrl}}/alerts/image/{{sampleAlert}} HTTP/1.1
+
+### 7.4 View / Download Alert Snapshot Image (/alerts/image?id=...)
+GET {{baseUrl}}/alerts/image?id={{sampleAlert}} HTTP/1.1
+
+### 7.5 Download Alert Snapshot Image (/alerts/download?id=...)
+GET {{baseUrl}}/alerts/download?id={{sampleAlert}} HTTP/1.1
+
+### 7.6 Download Alert Snapshot Image (/alerts/download/:filename)
+GET {{baseUrl}}/alerts/download/{{sampleAlert}} HTTP/1.1
+
+### 7.7 View Alert Snapshot Image (/stream/alerts/:filename)
+GET {{baseUrl}}/stream/alerts/{{sampleAlert}} HTTP/1.1
+
+
+# ==============================================================================
+# 8. USER PROFILE MANAGEMENT
+# ==============================================================================
+
+### 8.1 Get Profile Image
+# Returns profile_image.jpg (image/jpeg)
+GET {{baseUrl}}/profile-image HTTP/1.1
+
+### 8.2 Update Profile Image (Provide absolute or local path to image)
+POST {{baseUrl}}/profile-image HTTP/1.1
+Content-Type: application/json
+
+{
+  "path": "c:\\Users\\ASUS\\Projects\\HLS-Video-Streaming\\profile_image.jpg"
+}
+
+
+# ==============================================================================
+# 9. USER WATCH DETAILS & PLAYBACK PROGRESS
+# ==============================================================================
+
+### 9.1 Get Playback Progress / Watch Details
+# Returns position, duration, and audio track
+GET {{baseUrl}}/watch-details?firebaseUid={{firebaseUid}}&videoId={{videoId}} HTTP/1.1
+
+### 9.2 Save Playback Progress / Watch Details
+# Format for dataToPut is "<position_ms>\t<duration_ms>\t<audio_track_index>"
+POST {{baseUrl}}/watch-details HTTP/1.1
+Content-Type: application/json
+
+{
+  "firebaseUid": "{{firebaseUid}}",
+  "videoId": "{{videoId}}",
+  "dataToPut": "187288\t2625301\t0"
+}
+
+
+# ==============================================================================
+# 10. SERVER LIFECYCLE (SHUTDOWN)
+# ==============================================================================
+
+### 10.1 Gracefully Stop Server
+# WARNING: Running this request terminates the server process, cleans streams,
+# and shuts down HyperDHT and WebRTC listeners.
+# Uncomment the line below to execute:
+# POST {{baseUrl}}/stop HTTP/1.1
