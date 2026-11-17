@@ -124,8 +124,6 @@ function processTrack(input, mapIndex, output, isVideo, opts = {}, metadata, qua
         cmd.outputOptions([...specific, ...getCommonOptions(chunkDuration), '-hls_segment_filename', opts.segPath]);
 
         let startTime = Date.now();
-        // Log start but don't spam progress for every single track to keep terminal clean
-        console.log(`\n▶️  Starting: ${path.basename(output)}`);
         if (isVideo) cmd.on('progress', (p) => {
             updateCurrentQualityOnProcessingFile(quality, validQualities, p.timemark, metadata);
         });
@@ -144,7 +142,16 @@ function processTrack(input, mapIndex, output, isVideo, opts = {}, metadata, qua
                 resolve();
             });
 
-        cmd.run();
+        if (isVideo) {
+            waitForCurrentQualitiesToFinish(quality, validQualities, () => {
+                console.log(`\n▶️  Starting: ${path.basename(output)}`);
+                cmd.run();
+            })
+        }
+        else {
+            console.log(`\n▶️  Starting: ${path.basename(output)}`);
+            cmd.run();
+        }
     });
 }
 
