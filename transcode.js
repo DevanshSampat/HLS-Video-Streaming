@@ -67,37 +67,31 @@ const ALL_VIDEO_QUALITIES = [
     { height: 2160, bitrate: '15000k' }
 ];
 
-function getChunkDuration() {
-    try {
-        const prefPath = path.join(__dirname, 'userPreferences.json');
-        if (fs.existsSync(prefPath)) {
-            const userPreferences = JSON.parse(
-                fs.readFileSync(prefPath, 'utf8'),
-            );
-            if (
-                userPreferences &&
-                userPreferences.chunkDuration !== undefined &&
-                userPreferences.chunkDuration !== null &&
-                !isNaN(Number(userPreferences.chunkDuration))
-            ) {
-                return Number(userPreferences.chunkDuration);
-            }
-        }
-    } catch (e) {
-        console.error('Error reading chunkDuration from userPreferences.json:', e);
+const MIN_CHUNK_DURATION = 12;
+const MAX_SEGMENT_COUNT = 990;
+
+function getChunkDuration(videoDuration) {
+    const duration = Number(videoDuration);
+    if (!duration || isNaN(duration) || duration <= 0) {
+        return MIN_CHUNK_DURATION;
     }
-    return 12;
+    if (Math.ceil(duration / MIN_CHUNK_DURATION) > MAX_SEGMENT_COUNT) {
+        return Math.max(MIN_CHUNK_DURATION, Math.ceil(duration / (MAX_SEGMENT_COUNT - 1)));
+    }
+    return MIN_CHUNK_DURATION;
 }
 
-const chunkDuration = getChunkDuration();
+let chunkDuration = MIN_CHUNK_DURATION;
 
-const COMMON_OPTIONS = [
-    '-hls_time', `${chunkDuration}`,
-    '-hls_list_size', '0',
-    '-hls_playlist_type', 'event', // CHANGED: 'event' allows live playback
-    '-sn', '-dn', '-map_metadata', '-1',
-    '-max_muxing_queue_size', '1024'
-];
+function getCommonOptions(segmentDuration) {
+    return [
+        '-hls_time', `${segmentDuration}`,
+        '-hls_list_size', '0',
+        '-hls_playlist_type', 'event', // CHANGED: 'event' allows live playback
+        '-sn', '-dn', '-map_metadata', '-1',
+        '-max_muxing_queue_size', '1024'
+    ];
+}
 
 const processTrackSmartly = (input, mapIndex, output, isVideo, opts = {}, metadata, quality, validQualities) => {
     return new Promise((resolve, reject) => {
@@ -127,7 +121,7 @@ function processTrack(input, mapIndex, output, isVideo, opts = {}, metadata, qua
             specific.push('-vn', '-c:a', 'aac', '-ac', '2', '-ar', '44100');
         }
 
-        cmd.outputOptions([...specific, ...COMMON_OPTIONS, '-hls_segment_filename', opts.segPath]);
+        cmd.outputOptions([...specific, ...getCommonOptions(chunkDuration), '-hls_segment_filename', opts.segPath]);
 
         let startTime = Date.now();
         // Log start but don't spam progress for every single track to keep terminal clean
@@ -267,7 +261,9 @@ async function main() {
         }
 
         try {
-            console.log(metadata.format.duration);
+            const totalDuration = Number(metadata.format?.duration) || Number(vStream.duration) || 0;
+            chunkDuration = getChunkDuration(totalDuration);
+            console.log(`⏱️  Duration: ${totalDuration}s | Chunk Duration: ${chunkDuration}s`);
             if (fs.existsSync(path.join(__dirname, "isProcessing.txt"))) {
                 console.log("⏳ Another process is currently running. Retrying in 5 seconds...");
                 setTimeout(() => {

@@ -1956,17 +1956,10 @@ app.get("/watch-details", (req, res) => {
         .replaceAll("/", "")
         .split("?")[0] + ".json";
 
-    console.log({
-        firebaseUid: body.firebaseUid,
-        fileName,
-        filePath: path.join(__dirname, "user_watch_data", body.firebaseUid, fileName),
-        fileExists: fs.existsSync(path.join(__dirname, "user_watch_data", body.firebaseUid, fileName))
-    });
 
     if (fs.existsSync(path.join(__dirname, "user_watch_data", body.firebaseUid, fileName))) {
         const data = JSON.parse(fs.readFileSync(path.join(__dirname, "user_watch_data", body.firebaseUid, fileName)))
         const finalData = `${data.position}\t${data.duration}\t${data.audioTrack}`
-        console.log({ finalData })
         res.json({ status: "successful", data: finalData });
     } else {
         res.json({ status: "successful", data: "0\t1\t0" })
