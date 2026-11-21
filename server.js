@@ -182,11 +182,6 @@ const deleteFolderRecursive = (dirPath) => {
 };
 
 const deleteThumbnailFolder = () => {
-    const thumbnailDir = path.join(__dirname, "thumbnail");
-    if (fs.existsSync(thumbnailDir)) {
-        console.log("🗑️  Deleting thumbnail folder...");
-        deleteFolderRecursive(thumbnailDir);
-    }
     const thumbnailsDir = path.join(__dirname, "thumbnails");
     if (fs.existsSync(thumbnailsDir)) {
         deleteFolderRecursive(thumbnailsDir);
@@ -765,9 +760,17 @@ async function prepareAllM3u8Files() {
     }
 
     const thumbnailDir = path.join(__dirname, "thumbnail");
+
     if (!fs.existsSync(thumbnailDir)) {
         fs.mkdirSync(thumbnailDir, { recursive: true });
     }
+
+    const thumbnails = fs.readdirSync(thumbnailDir);
+    thumbnails.forEach(thumbnail => {
+        if(!fileIdPathMap[thumbnail.split('.')[0]]) {
+            fs.unlinkSync(path.join(thumbnailDir,thumbnail));
+        }
+    })
 
     console.log("⚙️  Preparing HLS m3u8 playlist files, thumbnails, and checking subtitles...");
     const keys = Object.keys(fileIdPathMap);
