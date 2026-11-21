@@ -763,10 +763,6 @@ async function prepareAllM3u8Files() {
         );
         forceStreamSingleQuality = userPreferences.forceStreamSingleQuality || false;
     }
-    if (forceStreamSingleQuality) {
-        console.log("No need to prepare manifest, single quality is forced")
-        return;
-    }
 
     const thumbnailDir = path.join(__dirname, "thumbnail");
     if (!fs.existsSync(thumbnailDir)) {
@@ -788,6 +784,10 @@ async function prepareAllM3u8Files() {
         if (!thumbExists) {
             console.log(`🖼️  Generating thumbnail for: ${path.basename(videoPath)}`);
             await generateVideoThumbnail(videoPath, thumbnailPath);
+        }
+
+        if (forceStreamSingleQuality) {
+            continue;
         }
 
         if (masterExists) {
