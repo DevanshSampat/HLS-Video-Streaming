@@ -2271,7 +2271,8 @@ app.get("/continue-watching/:uid", async (req, res) => {
             ...videos[videoId],
             ...{
                 coverImage: (requestBaseUrl ? `${requestBaseUrl}/thumbnails/${thumbFilename}` : `/thumbnails/${thumbFilename}`)
-            }
+            },
+            ...fileData
         })
     }
     res.json({ data: dataToSend });
