@@ -161,17 +161,35 @@ function getChunkDuration() {
 
 const deleteFolderRecursive = (dirPath) => {
     if (fs.existsSync(dirPath)) {
-        fs.readdirSync(dirPath).forEach(function (file) {
-            var curPath = dirPath + "/" + file;
-            if (fs.lstatSync(curPath).isDirectory()) {
-                // recurse
-                deleteFolderRecursive(curPath);
-            } else {
-                // delete file
-                fs.unlinkSync(curPath);
-            }
-        });
-        fs.rmdirSync(dirPath);
+        try {
+            fs.rmSync(dirPath, { recursive: true, force: true });
+        } catch (e) {
+            fs.readdirSync(dirPath).forEach(function (file) {
+                var curPath = path.join(dirPath, file);
+                if (fs.lstatSync(curPath).isDirectory()) {
+                    // recurse
+                    deleteFolderRecursive(curPath);
+                } else {
+                    // delete file
+                    fs.unlinkSync(curPath);
+                }
+            });
+            try {
+                fs.rmdirSync(dirPath);
+            } catch (err) { }
+        }
+    }
+};
+
+const deleteThumbnailFolder = () => {
+    const thumbnailDir = path.join(__dirname, "thumbnail");
+    if (fs.existsSync(thumbnailDir)) {
+        console.log("🗑️  Deleting thumbnail folder...");
+        deleteFolderRecursive(thumbnailDir);
+    }
+    const thumbnailsDir = path.join(__dirname, "thumbnails");
+    if (fs.existsSync(thumbnailsDir)) {
+        deleteFolderRecursive(thumbnailsDir);
     }
 };
 
@@ -576,6 +594,123 @@ function filterManifest(originalM3u8, maxQuality) {
     return output.join("\n");
 }
 
+const generateVideoThumbnail = (videoPath, finalOutputPath) => {
+    return new Promise((resolve) => {
+        const dir = path.dirname(finalOutputPath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        const tempPath = path.join(dir, `temp_${Date.now()}_${path.basename(finalOutputPath)}`);
+
+        const runWithArgs = (inputOptions, onDone) => {
+            ffmpeg(videoPath)
+                .inputOptions(inputOptions)
+                .outputOptions([
+                    "-threads", "1",
+                    "-y",
+                    "-vf", "scale=1080:-2",
+                    "-vframes", "1",
+                    "-update", "1"
+                ])
+                .output(tempPath)
+                .on("end", () => {
+                    if (fs.existsSync(tempPath) && fs.statSync(tempPath).size > 0) {
+                        try {
+                            if (fs.existsSync(finalOutputPath)) fs.unlinkSync(finalOutputPath);
+                            fs.renameSync(tempPath, finalOutputPath);
+                            resolve(true);
+                        } catch (e) {
+                            try {
+                                fs.copyFileSync(tempPath, finalOutputPath);
+                                fs.unlinkSync(tempPath);
+                                resolve(true);
+                            } catch (err) {
+                                resolve(false);
+                            }
+                        }
+                    } else {
+                        onDone(false);
+                    }
+                })
+                .on("error", () => {
+                    onDone(false);
+                })
+                .run();
+        };
+
+        // Try with -ss 00:00:10 first 
+        runWithArgs(["-ss", "00:01:00"], (ok) => {
+            if (ok) return;
+            // Fallback for short clips (< 1s): take the first frame (matches FileAdapter.java)
+            runWithArgs([], (fallbackOk) => {
+                if (fs.existsSync(tempPath)) {
+                    try { fs.unlinkSync(tempPath); } catch (e) { }
+                }
+                resolve(fallbackOk);
+            });
+        });
+    });
+};
+
+const generateVideoThumbnailForSpecificPosition = (videoPath, finalOutputPath, position) => {
+    return new Promise((resolve) => {
+        const dir = path.dirname(finalOutputPath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        const tempPath = path.join(dir, `temp_${Date.now()}_${path.basename(finalOutputPath)}`);
+
+        const runWithArgs = (inputOptions, onDone) => {
+            ffmpeg(videoPath)
+                .inputOptions(inputOptions)
+                .outputOptions([
+                    "-threads", "1",
+                    "-y",
+                    "-vf", "scale=1080:-2",
+                    "-vframes", "1",
+                    "-update", "1"
+                ])
+                .output(tempPath)
+                .on("end", () => {
+                    if (fs.existsSync(tempPath) && fs.statSync(tempPath).size > 0) {
+                        try {
+                            if (fs.existsSync(finalOutputPath)) fs.unlinkSync(finalOutputPath);
+                            fs.renameSync(tempPath, finalOutputPath);
+                            resolve(true);
+                        } catch (e) {
+                            try {
+                                fs.copyFileSync(tempPath, finalOutputPath);
+                                fs.unlinkSync(tempPath);
+                                resolve(true);
+                            } catch (err) {
+                                resolve(false);
+                            }
+                        }
+                    } else {
+                        onDone(false);
+                    }
+                })
+                .on("error", (error) => {
+                    console.error(error);
+                    onDone(false);
+                })
+                .run();
+        };
+
+        const timeString = formatVideoTimestamp(position);
+        runWithArgs(["-ss", timeString], (ok) => {
+            if (ok) return;
+            // Fallback for short clips (< 1s): take the first frame (matches FileAdapter.java)
+            runWithArgs([], (fallbackOk) => {
+                if (fs.existsSync(tempPath)) {
+                    try { fs.unlinkSync(tempPath); } catch (e) { }
+                }
+                resolve(fallbackOk);
+            });
+        });
+    });
+};
+
 async function prepareAllM3u8Files() {
     let forceStreamSingleQuality = false;
     if (fs.existsSync(path.join(__dirname, "userPreferences.json"))) {
@@ -589,14 +724,28 @@ async function prepareAllM3u8Files() {
         return;
     }
 
-    console.log("⚙️  Preparing HLS m3u8 playlist files...");
+    const thumbnailDir = path.join(__dirname, "thumbnail");
+    if (!fs.existsSync(thumbnailDir)) {
+        fs.mkdirSync(thumbnailDir, { recursive: true });
+    }
+
+    console.log("⚙️  Preparing HLS m3u8 playlist files and thumbnails...");
     const keys = Object.keys(fileIdPathMap);
     for (const id of keys) {
         const videoPath = fileIdPathMap[id];
         const streamDir = path.join(__dirname, "streams", id);
         const masterPlaylistPath = path.join(streamDir, "master.m3u8");
+        const thumbnailPath = path.join(thumbnailDir, `${id}.jpg`);
 
-        if (fs.existsSync(masterPlaylistPath)) {
+        const masterExists = fs.existsSync(masterPlaylistPath);
+        const thumbExists = fs.existsSync(thumbnailPath);
+
+        if (!thumbExists) {
+            console.log(`🖼️  Generating thumbnail for: ${path.basename(videoPath)}`);
+            await generateVideoThumbnail(videoPath, thumbnailPath);
+        }
+
+        if (masterExists) {
             // console.log(`⏩ Playlists already exist for video: ${path.basename(videoPath)}`);
             continue;
         }
@@ -1359,6 +1508,8 @@ app.use("/stream", async (req, res, next) => {
         return handleStreamRecordingCommon(req, res, recSubPath);
     } else if (id.includes("alerts/")) {
         return handleServerDownloadAlertImage(req, res);
+    } else if (id.includes("thumbnail/") || id.includes("thumbnails/")) {
+        return handleServerDownloadThumbnail(req, res);
     } else if (id.includes("streams/")) {
         id = id.substring(id.lastIndexOf("streams/") + 8);
         id = id.substring(0, id.lastIndexOf("/"));
@@ -1458,6 +1609,10 @@ app.get("/", async (req, res) => {
 });
 
 app.get("/videos", (req, res) => {
+    const clientHost = req.get("host");
+    const proto = clientHost.includes(":") ? "http" : "https";
+    const requestBaseUrl = (clientHost && clientHost !== "dht-server") ? `${proto}://${clientHost}` : (globalUrl || "");
+
     let ip = req.headers["x-forwarded-for"] || (req.socket && req.socket.remoteAddress) || "local";
     let isDirectConnection = true;
     if (peerIpRegistry[ip]) {
@@ -1493,21 +1648,24 @@ app.get("/videos", (req, res) => {
     for (const key in fileIdPathMap) {
         const filePath = fileIdPathMap[key];
         const fileName = path.basename(filePath);
+        const thumbFilename = `${key}.jpg`;
+        const thumbExists = fs.existsSync(path.join(__dirname, "thumbnail", thumbFilename));
         response.push({
             name: fileName,
+            key: key,
+            actualPath: filePath,
             path: forceStreamSingleQuality
                 ? key
                 : `streams/${key}/master.m3u8${!req.query.forceMultiQuality && isDirectConnection && streamSingleQualityLocally ? "?maxQuality=2160" : ""}`,
+            coverImage: thumbExists
+                ? (requestBaseUrl ? `${requestBaseUrl}/thumbnail/${thumbFilename}` : `/thumbnail/${thumbFilename}`)
+                : undefined,
             subtitle: true,
         });
     }
     response.sort((a, b) =>
         a.name.toLowerCase().localeCompare(b.name.toLowerCase()),
     );
-
-    const clientHost = req.get("host");
-    const proto = clientHost.includes(":") ? "http" : "https";
-    const requestBaseUrl = (clientHost && clientHost !== "dht-server") ? `${proto}://${clientHost}` : (globalUrl || "");
 
     // Append periodic recordings stored in separate variable cachedRecordings
     for (const rec of cachedRecordings) {
@@ -1734,6 +1892,109 @@ app.get("/alerts/image/:filename", handleServerDownloadAlertImage);
 app.get("/alerts/image", handleServerDownloadAlertImage);
 app.get("/alerts/download", handleServerDownloadAlertImage);
 app.get("/alerts/download/:filename", handleServerDownloadAlertImage);
+
+const handleServerDownloadThumbnail = (req, res) => {
+    let filenameParam =
+        req.query.id || req.query.filename || req.params.filename;
+    if (!filenameParam && req.path) {
+        filenameParam = path.basename(req.path);
+    }
+    if (!filenameParam) {
+        return res
+            .status(400)
+            .json({ success: false, error: "id or filename parameter is required" });
+    }
+    const filename = path.basename(filenameParam);
+    const thumbnailDir = path.join(__dirname, "thumbnail");
+    let targetFile = path.join(thumbnailDir, filename);
+    if (!fs.existsSync(targetFile) && !filename.includes(".")) {
+        targetFile = path.join(thumbnailDir, `${filename}.jpg`);
+    }
+    if (!fs.existsSync(targetFile)) {
+        for (const id in fileIdPathMap) {
+            const vName = path.basename(fileIdPathMap[id]);
+            const vBase = path.basename(fileIdPathMap[id], path.extname(fileIdPathMap[id]));
+            if (filename === `${id}.jpg` || filename === id || filename === `${vBase}.jpg` || filename === `${vName}.jpg`) {
+                targetFile = path.join(thumbnailDir, `${id}.jpg`);
+                break;
+            }
+        }
+    }
+    if (fs.existsSync(targetFile)) {
+        const buffer = fs.readFileSync(targetFile);
+        res.writeHead(200, {
+            "Content-Type": "image/jpeg",
+            "Content-Length": buffer.length,
+            "Access-Control-Allow-Origin": "*",
+            "Connection": "keep-alive",
+            "Cache-Control": "public, max-age=86400"
+        });
+        return res.end(buffer);
+    }
+    const msg = "Thumbnail not found";
+    res.writeHead(404, {
+        "Content-Type": "text/plain",
+        "Content-Length": Buffer.byteLength(msg),
+        "Connection": "keep-alive",
+        "Access-Control-Allow-Origin": "*"
+    });
+    return res.end(msg);
+};
+
+const handleServerDownloadThumbnails = (req, res) => {
+    let filenameParam =
+        req.query.id || req.query.filename || req.params.filename;
+    if (!filenameParam && req.path) {
+        filenameParam = path.basename(req.path);
+    }
+    if (!filenameParam) {
+        return res
+            .status(400)
+            .json({ success: false, error: "id or filename parameter is required" });
+    }
+    const filename = path.basename(filenameParam);
+    const thumbnailDir = path.join(__dirname, "thumbnails");
+    let targetFile = path.join(thumbnailDir, filename);
+    if (!fs.existsSync(targetFile) && !filename.includes(".")) {
+        targetFile = path.join(thumbnailDir, `${filename}.jpg`);
+    }
+    if (!fs.existsSync(targetFile)) {
+        for (const id in fileIdPathMap) {
+            const vName = path.basename(fileIdPathMap[id]);
+            const vBase = path.basename(fileIdPathMap[id], path.extname(fileIdPathMap[id]));
+            if (filename === `${id}.jpg` || filename === id || filename === `${vBase}.jpg` || filename === `${vName}.jpg`) {
+                targetFile = path.join(thumbnailDir, `${id}.jpg`);
+                break;
+            }
+        }
+    }
+    if (fs.existsSync(targetFile)) {
+        const buffer = fs.readFileSync(targetFile);
+        res.writeHead(200, {
+            "Content-Type": "image/jpeg",
+            "Content-Length": buffer.length,
+            "Access-Control-Allow-Origin": "*",
+            "Connection": "keep-alive",
+            "Cache-Control": "public, max-age=86400"
+        });
+        return res.end(buffer);
+    }
+    const msg = "Thumbnail not found";
+    res.writeHead(404, {
+        "Content-Type": "text/plain",
+        "Content-Length": Buffer.byteLength(msg),
+        "Connection": "keep-alive",
+        "Access-Control-Allow-Origin": "*"
+    });
+    return res.end(msg);
+};
+
+app.use("/thumbnail", express.static(path.join(__dirname, "thumbnail")));
+app.use("/thumbnails", express.static(path.join(__dirname, "thumbnails")));
+app.get("/thumbnail/:filename", handleServerDownloadThumbnails);
+app.get("/thumbnail", handleServerDownloadThumbnail);
+app.get("/thumbnails/:filename", handleServerDownloadThumbnails);
+app.get("/thumbnails", handleServerDownloadThumbnail);
 
 app.get("/stop-processing", (req, res) => {
     if (fs.existsSync(`${__dirname}/isProcessing.txt`)) {
@@ -1979,9 +2240,47 @@ app.get("/device-name", async (req, res) => {
     });
 });
 
-app.post("/stop", async (req, res) => {
+app.get("/continue-watching/:uid", async (req, res) => {
+    const clientHost = req.get("host");
+    const proto = clientHost.includes(":") ? "http" : "https";
+    const requestBaseUrl = (clientHost && clientHost !== "dht-server") ? `${proto}://${clientHost}` : (globalUrl || "");
+    const uid = req.params.uid;
+    if (!fs.existsSync(path.join(__dirname, "user_watch_data", uid))) {
+        return res.json({ data: [] })
+    }
+    const dataToSend = [];
+    const videoResponse = (await axios.get("http://localhost:9000/videos")).data;
+    const videos = {};
+    videoResponse.forEach(video => videos[video.key] = video);
+    const userWatchFiles = fs.readdirSync(path.join(__dirname, "user_watch_data", uid)).sort((a, b) => {
+        const aTimeMs = fs.statSync(path.join(path.join(__dirname, "user_watch_data", uid, a)));
+        const bTimeMs = fs.statSync(path.join(path.join(__dirname, "user_watch_data", uid, b)));
+        const aLastModifiedAt = aTimeMs.mtime;
+        const bLastModifiedAt = bTimeMs.mtime;
+        return bLastModifiedAt - aLastModifiedAt;
+    });
+    for (const file of userWatchFiles) {
+        const videoId = file.split('.')[0];
+        console.log(videoId);
+        if (!videos[videoId]) continue;
+        const fileData = JSON.parse(fs.readFileSync(path.join(__dirname, "user_watch_data", uid, file), 'utf-8'));
+        const thumbFilename = `${videoId}_${fileData.position}.jpg`;
+        console.log(videos[videoId].actualPath);
+        await generateVideoThumbnailForSpecificPosition(videos[videoId].actualPath, path.join(__dirname, "thumbnails", thumbFilename), fileData.position);
+        dataToSend.push({
+            ...videos[videoId],
+            ...{
+                coverImage: (requestBaseUrl ? `${requestBaseUrl}/thumbnails/${thumbFilename}` : `/thumbnails/${thumbFilename}`)
+            }
+        })
+    }
+    res.json({ data: dataToSend });
+})
+
+const handleServerStop = async (req, res) => {
     res.send("ok");
     deleteChunkedFiles();
+    deleteThumbnailFolder();
     try {
         webrtcServer.stop();
         for (const [key, { socket }] of activePeers.entries()) {
@@ -1994,7 +2293,10 @@ app.post("/stop", async (req, res) => {
     exec(`cd ${__dirname} && tailscale down`, (error, stdout, stderr) => {
         process.exit(0);
     });
-});
+};
+
+app.post("/stop", handleServerStop);
+app.get("/stop", handleServerStop);
 
 function printBanner() {
     const line = "═".repeat(74);
@@ -2091,6 +2393,7 @@ async function start() {
 
 async function shutdown() {
     console.log("\n[Shutdown] Closing hole-punched server gracefully...");
+    deleteThumbnailFolder();
     try {
         for (const [key, { socket }] of activePeers.entries()) {
             socket.destroy();
@@ -2108,5 +2411,17 @@ async function shutdown() {
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+
+const formatVideoTimestamp = (position) => {
+    let timeString = "";
+    timeString += `${Math.floor(position / 3600000)}`.padStart(2, "0") + ":";
+    position = position % 3600000;
+    timeString += `${Math.floor(position / 60000)}`.padStart(2, "0") + ":";
+    position = position % 60000;
+    timeString += `${Math.floor(position / 1000)}`.padStart(2, "0") + ".";
+    position = position % 1000;
+    timeString += `${position}`.padStart(3, "0");
+    return timeString;
+}
 
 start();

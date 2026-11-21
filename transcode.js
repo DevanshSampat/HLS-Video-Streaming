@@ -41,18 +41,78 @@ if (!fs.existsSync(OUTPUT_DIR)) {
 
 const deleteFolderRecursive = (dirPath) => {
     if (fs.existsSync(dirPath)) {
-        fs.readdirSync(dirPath).forEach(function (file) {
-            var curPath = dirPath + "/" + file;
-            if (fs.lstatSync(curPath).isDirectory()) {
-                // recurse
-                deleteFolderRecursive(curPath);
-            } else {
-                // delete file
-                fs.unlinkSync(curPath);
-            }
-        });
-        fs.rmdirSync(dirPath);
+        try {
+            fs.rmSync(dirPath, { recursive: true, force: true });
+        } catch (e) {
+            fs.readdirSync(dirPath).forEach(function (file) {
+                var curPath = dirPath + "/" + file;
+                if (fs.lstatSync(curPath).isDirectory()) {
+                    // recurse
+                    deleteFolderRecursive(curPath);
+                } else {
+                    // delete file
+                    fs.unlinkSync(curPath);
+                }
+            });
+            fs.rmdirSync(dirPath);
+        }
     }
+};
+
+const generateVideoThumbnail = (videoPath, finalOutputPath) => {
+    return new Promise((resolve) => {
+        const dir = path.dirname(finalOutputPath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        const tempPath = path.join(dir, `temp_${Date.now()}_${path.basename(finalOutputPath)}`);
+
+        const runWithArgs = (inputOptions, onDone) => {
+            ffmpeg(videoPath)
+                .inputOptions(inputOptions)
+                .outputOptions([
+                    '-threads', '1',
+                    '-y',
+                    '-vf', 'scale=360:-2',
+                    '-vframes', '1',
+                    '-update', '1'
+                ])
+                .output(tempPath)
+                .on('end', () => {
+                    if (fs.existsSync(tempPath) && fs.statSync(tempPath).size > 0) {
+                        try {
+                            if (fs.existsSync(finalOutputPath)) fs.unlinkSync(finalOutputPath);
+                            fs.renameSync(tempPath, finalOutputPath);
+                            resolve(true);
+                        } catch (e) {
+                            try {
+                                fs.copyFileSync(tempPath, finalOutputPath);
+                                fs.unlinkSync(tempPath);
+                                resolve(true);
+                            } catch (err) {
+                                resolve(false);
+                            }
+                        }
+                    } else {
+                        onDone(false);
+                    }
+                })
+                .on('error', () => {
+                    onDone(false);
+                })
+                .run();
+        };
+
+        runWithArgs(['-ss', '00:00:01'], (ok) => {
+            if (ok) return;
+            runWithArgs([], (fallbackOk) => {
+                if (fs.existsSync(tempPath)) {
+                    try { fs.unlinkSync(tempPath); } catch (e) { }
+                }
+                resolve(fallbackOk);
+            });
+        });
+    });
 };
 
 
@@ -220,6 +280,13 @@ async function main() {
     OUTPUT_DIR = path.join(__dirname, 'streams', id);
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
     console.log(`📂 Input: ${path.basename(INPUT_FILE)}`);
+
+    const thumbnailDir = path.join(__dirname, 'thumbnail');
+    if (!fs.existsSync(thumbnailDir)) fs.mkdirSync(thumbnailDir, { recursive: true });
+    const thumbPath = path.join(thumbnailDir, `${id}.jpg`);
+    if (!fs.existsSync(thumbPath)) {
+        generateVideoThumbnail(INPUT_FILE, thumbPath);
+    }
 
     ffmpeg.ffprobe(INPUT_FILE, async (err, metadata) => {
         if (err) return console.error("❌ Metadata error");

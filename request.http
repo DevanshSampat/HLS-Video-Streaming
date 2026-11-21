@@ -2,7 +2,7 @@
 @videoId = video_id
 @sampleRecording = recording_file_name.mp4
 @sampleAlert = alert_file_name.jpg
-@firebaseUid = firebase_uid
+@firebaseUid = Rbf89NQtK0derIb6AwrnqhxLrIl1
 
 
 # ==============================================================================
@@ -64,6 +64,12 @@ GET {{baseUrl}}/progress HTTP/1.1
 ### 2.4 Stop Active Video Processing
 # Cancels current transcoding task and cleans up temporary stream directory
 GET {{baseUrl}}/stop-processing HTTP/1.1
+
+### 2.5 Fetch Video Thumbnail (/thumbnail/:filename)
+GET {{baseUrl}}/thumbnail/{{videoId}}.jpg HTTP/1.1
+
+### 2.6 Fetch Video Thumbnail (/thumbnail?id=...)
+GET {{baseUrl}}/thumbnail?id={{videoId}} HTTP/1.1
 
 
 # ==============================================================================
@@ -222,12 +228,17 @@ Content-Type: application/json
   "dataToPut": "187288\t2625301\t0"
 }
 
+# ==============================================================================
+# 10. CONTINUE WATCHING
+# ==============================================================================
+GET {{baseUrl}}/continue-watching/{{firebaseUid}}
+
 
 # ==============================================================================
-# 10. SERVER LIFECYCLE (SHUTDOWN)
+# 11. SERVER LIFECYCLE (SHUTDOWN)
 # ==============================================================================
 
-### 10.1 Gracefully Stop Server
+### 11.1 Gracefully Stop Server
 # WARNING: Running this request terminates the server process, cleans streams,
 # and shuts down HyperDHT and WebRTC listeners.
 # Uncomment the line below to execute:
