@@ -274,6 +274,7 @@ let globalUrl = "";
 let localIpAddress = "no address";
 
 const fileIdPathMap = {};
+const fileSubtitleMap = {};
 
 const nodePath = fs.existsSync(path.join(__dirname, "../node_path.txt"))
     ? fs.readFileSync(path.join(__dirname, "../node_path.txt"), "utf8")
@@ -711,6 +712,49 @@ const generateVideoThumbnailForSpecificPosition = (videoPath, finalOutputPath, p
     });
 };
 
+const checkEnglishSrtSubtitles = (metadata, videoPath) => {
+    if (metadata && Array.isArray(metadata.streams)) {
+        const subtitleStreams = metadata.streams.filter((s) => s.codec_type === "subtitle");
+        const hasEngSrt = subtitleStreams.some((s) => {
+            const codec = (s.codec_name || "").toLowerCase();
+            const lang = (s.tags?.language || "").toLowerCase();
+            const title = (s.tags?.title || "").toLowerCase();
+            const isEnglish =
+                lang.includes("eng") ||
+                lang.includes("en") ||
+                title.includes("english") ||
+                title.includes("eng");
+            const isSrt =
+                codec === "subrip" ||
+                codec === "srt" ||
+                codec === "text" ||
+                codec === "mov_text" ||
+                codec === "webvtt" ||
+                codec === "ass";
+            return isEnglish && isSrt;
+        });
+        if (hasEngSrt) return true;
+    }
+
+    if (videoPath) {
+        try {
+            const videoDir = path.dirname(videoPath);
+            const baseName = path.basename(videoPath, path.extname(videoPath));
+            const candidates = [
+                path.join(videoDir, `${baseName}.srt`),
+                path.join(videoDir, `${baseName}.en.srt`),
+                path.join(videoDir, `${baseName}.eng.srt`),
+                path.join(videoDir, `${baseName}.English.srt`),
+            ];
+            for (const c of candidates) {
+                if (fs.existsSync(c)) return true;
+            }
+        } catch (e) { }
+    }
+
+    return false;
+};
+
 async function prepareAllM3u8Files() {
     let forceStreamSingleQuality = false;
     if (fs.existsSync(path.join(__dirname, "userPreferences.json"))) {
@@ -729,13 +773,14 @@ async function prepareAllM3u8Files() {
         fs.mkdirSync(thumbnailDir, { recursive: true });
     }
 
-    console.log("⚙️  Preparing HLS m3u8 playlist files and thumbnails...");
+    console.log("⚙️  Preparing HLS m3u8 playlist files, thumbnails, and checking subtitles...");
     const keys = Object.keys(fileIdPathMap);
     for (const id of keys) {
         const videoPath = fileIdPathMap[id];
         const streamDir = path.join(__dirname, "streams", id);
         const masterPlaylistPath = path.join(streamDir, "master.m3u8");
         const thumbnailPath = path.join(thumbnailDir, `${id}.jpg`);
+        const metaJsonPath = path.join(streamDir, "metadata.json");
 
         const masterExists = fs.existsSync(masterPlaylistPath);
         const thumbExists = fs.existsSync(thumbnailPath);
@@ -746,7 +791,41 @@ async function prepareAllM3u8Files() {
         }
 
         if (masterExists) {
-            // console.log(`⏩ Playlists already exist for video: ${path.basename(videoPath)}`);
+            // Check if metadata.json already has cached hasSubtitles
+            let hasLoadedSubtitleInfo = false;
+            if (fs.existsSync(metaJsonPath)) {
+                try {
+                    const savedMeta = JSON.parse(fs.readFileSync(metaJsonPath, "utf8"));
+                    if (savedMeta.hasSubtitles !== undefined) {
+                        fileSubtitleMap[id] = savedMeta.hasSubtitles === true;
+                        hasLoadedSubtitleInfo = true;
+                    }
+                } catch (e) { }
+            }
+
+            if (!hasLoadedSubtitleInfo) {
+                try {
+                    const metadata = await new Promise((resolve, reject) => {
+                        ffmpeg.ffprobe(videoPath, (err, meta) => {
+                            if (err) reject(err);
+                            else resolve(meta);
+                        });
+                    });
+                    const hasSubs = checkEnglishSrtSubtitles(metadata, videoPath);
+                    fileSubtitleMap[id] = hasSubs;
+
+                    if (fs.existsSync(metaJsonPath)) {
+                        try {
+                            const savedMeta = JSON.parse(fs.readFileSync(metaJsonPath, "utf8"));
+                            savedMeta.hasSubtitles = hasSubs;
+                            fs.writeFileSync(metaJsonPath, JSON.stringify(savedMeta, null, 2));
+                        } catch (e) { }
+                    }
+                } catch (err) {
+                    console.error(`❌ Error probing subtitles for: ${path.basename(videoPath)}`, err);
+                    fileSubtitleMap[id] = false;
+                }
+            }
             continue;
         }
 
@@ -759,6 +838,9 @@ async function prepareAllM3u8Files() {
                     else resolve(meta);
                 });
             });
+
+            const hasSubs = checkEnglishSrtSubtitles(metadata, videoPath);
+            fileSubtitleMap[id] = hasSubs;
 
             const duration = metadata.format.duration;
             if (!duration) {
@@ -796,6 +878,7 @@ async function prepareAllM3u8Files() {
                 videoCodec: vStream.codec_name,
                 audioTracks: audioTracks,
                 qualities: validQualities,
+                hasSubtitles: hasSubs,
             };
             fs.writeFileSync(
                 path.join(streamDir, "metadata.json"),
@@ -1650,6 +1733,20 @@ app.get("/videos", (req, res) => {
         const fileName = path.basename(filePath);
         const thumbFilename = `${key}.jpg`;
         const thumbExists = fs.existsSync(path.join(__dirname, "thumbnail", thumbFilename));
+        let hasSubtitle = false;
+        if (fileSubtitleMap[key] !== undefined) {
+            hasSubtitle = fileSubtitleMap[key];
+        } else {
+            const metaPath = path.join(__dirname, "streams", key, "metadata.json");
+            if (fs.existsSync(metaPath)) {
+                try {
+                    const savedMeta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+                    hasSubtitle = savedMeta.hasSubtitles === true;
+                    fileSubtitleMap[key] = hasSubtitle;
+                } catch (e) { }
+            }
+        }
+
         response.push({
             name: fileName,
             key: key,
@@ -1660,7 +1757,7 @@ app.get("/videos", (req, res) => {
             coverImage: thumbExists
                 ? (requestBaseUrl ? `${requestBaseUrl}/thumbnail/${thumbFilename}` : `/thumbnail/${thumbFilename}`)
                 : undefined,
-            subtitle: true,
+            subtitle: hasSubtitle,
         });
     }
     response.sort((a, b) =>
