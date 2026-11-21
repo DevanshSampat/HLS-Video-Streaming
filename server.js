@@ -767,8 +767,8 @@ async function prepareAllM3u8Files() {
 
     const thumbnails = fs.readdirSync(thumbnailDir);
     thumbnails.forEach(thumbnail => {
-        if(!fileIdPathMap[thumbnail.split('.')[0]]) {
-            fs.unlinkSync(path.join(thumbnailDir,thumbnail));
+        if (!fileIdPathMap[thumbnail.split('.')[0]]) {
+            fs.unlinkSync(path.join(thumbnailDir, thumbnail));
         }
     })
 
