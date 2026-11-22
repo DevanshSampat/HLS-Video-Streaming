@@ -15,7 +15,7 @@ const webrtcServer = require("./webrtcServer");
 const httpPort = 6969;
 let serverIpAddressResponse;
 let lastRequestTime = {};
-const deletionInterval = 2 * 60 * 60 * 1000;
+const deletionInterval = 5 * 60 * 1000;
 const currentlyProcessingChunks = {};
 const cachedPreferredQuality = {};
 let isCameraFeedAvailable = false;
