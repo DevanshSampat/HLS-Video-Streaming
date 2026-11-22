@@ -200,29 +200,16 @@ const deleteChunkedFiles = () => {
         const chunks = fs
             .readdirSync(path.join(__dirname, "streams", f))
             .filter((c) => c.endsWith(".ts"));
-        if (chunks.length > 0) console.log(`Deleting chunks for video: ${f}`);
-        if (f === "android-screen-sharing") {
-            const sortedChunks = chunks.sort((a, b) => {
-                const aIndex = Number(a.split("stream")[1].split(".")[0]);
-                const bIndex = Number(b.split("stream")[1].split(".")[0]);
-                return aIndex - bIndex;
-            });
-            for (let i = 0; i < sortedChunks.length - 2; i++) {
-                try {
-                    fs.unlinkSync(path.join(__dirname, "streams", f, sortedChunks[i]));
-                } catch (error) {
-                    console.log(error);
-                }
+        const now = Date.now();
+        chunks.forEach(chunkFile => {
+            const stats = fs.statSync(path.join(__dirname, "streams", f, chunkFile));
+            if (stats.mtimeMs < now - 5 * 60 * 1000) {
+                const message = `Deleting ${f}/${chunkFile}`;
+                console.log(message);
+                axios.post("http://localhost:9090", { message }).catch(() => { });
+                fs.unlinkSync(path.join(__dirname, "streams", f, chunkFile))
             }
-            return;
-        }
-        for (let i = 0; i < chunks.length; i++) {
-            try {
-                fs.unlinkSync(path.join(__dirname, "streams", f, chunks[i]));
-            } catch (error) {
-                console.log(error);
-            }
-        }
+        })
     });
 };
 
