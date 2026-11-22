@@ -194,9 +194,6 @@ const deleteChunkedFiles = () => {
     if (!fs.existsSync(path.join(__dirname, "streams"))) return;
     const files = fs.readdirSync(path.join(__dirname, "streams"));
     files.forEach((f) => {
-        if ((lastRequestTime[f] || 0) + deletionInterval > Date.now()) {
-            return;
-        }
         const chunks = fs
             .readdirSync(path.join(__dirname, "streams", f))
             .filter((c) => c.endsWith(".ts"));
