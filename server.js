@@ -1591,21 +1591,21 @@ app.use("/stream", async (req, res, next) => {
             .replaceAll("\\", "/");
         if (filePath.endsWith(".m3u8")) {
             res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-            if (filePath.endsWith("master.m3u8")) {
-                if (req.query?.maxQuality) {
-                    if (fs.existsSync(filePath)) {
-                        console.log(
-                            `Filtering manifest for max quality: ${req.query.maxQuality}p`,
-                        );
-                        return res.send(
-                            filterManifest(
-                                fs.readFileSync(filePath, "utf8"),
-                                req.query.maxQuality,
-                            ),
-                        );
-                    }
-                }
-            }
+            // if (filePath.endsWith("master.m3u8")) {
+            //     if (req.query?.maxQuality) {
+            //         if (fs.existsSync(filePath)) {
+            //             console.log(
+            //                 `Filtering manifest for max quality: ${req.query.maxQuality}p`,
+            //             );
+            //             return res.send(
+            //                 filterManifest(
+            //                     fs.readFileSync(filePath, "utf8"),
+            //                     req.query.maxQuality,
+            //                 ),
+            //             );
+            //         }
+            //     }
+            // }
         } else if (filePath.endsWith(".ts") && !id.includes("android-screen-sharing")) {
             const parsed = parseSegmentPath(filePath);
             if (parsed && parsed.type === "video") {
