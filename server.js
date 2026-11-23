@@ -1702,16 +1702,18 @@ app.get("/videos", (req, res) => {
         forceStreamSingleQuality =
             userPreferences.forceStreamSingleQuality || false;
     }
-    axios
-        .post("http://localhost:9090", {
-            message: `Device connected ${ip}: ${isDirectConnection ? "Locally" : "Remotely"}`,
-        })
+    if (ip != "127.0.0.1") {
+        axios
+            .post("http://localhost:9090", {
+                message: `Device connected ${ip}: ${isDirectConnection ? "Locally" : "Remotely"}`,
+            })
         .then(() => {
             setTimeout(() => {
                 axios.post("http://localhost:9090", { message: "" });
             }, 5000);
         })
         .catch(() => { });
+    }
     res.statusCode = 200;
     res.contentType = "application/json";
     const response = [];
