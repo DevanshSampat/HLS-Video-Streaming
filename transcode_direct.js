@@ -273,6 +273,7 @@ async function main() {
     OUTPUT_DIR = path.join(OUTPUT_DIR, path.basename(INPUT_FILE).substring(0, path.basename(INPUT_FILE).lastIndexOf(".")));
     if (fs.existsSync(OUTPUT_DIR)) {
         console.log(`This file seems processed, delete the folder if you wish to try again "${OUTPUT_DIR}"`)
+        return;
     }
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
     console.log(`📂 Input: ${path.basename(INPUT_FILE)}`);
