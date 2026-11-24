@@ -22,6 +22,7 @@ let isCameraFeedAvailable = false;
 let recordingsFetchingInterval = 60000;
 let cachedRecordings = [];
 const peerIpRegistry = {};
+const languageNames = new Intl.DisplayNames(['en'], { type: 'language' });
 
 // -------------------------------------------------------------
 // HyperDHT Hole-Punching & Key Management
@@ -850,12 +851,17 @@ async function prepareAllM3u8Files() {
                 validQualities.push({ height: vStream.height, bitrate: "2000k" });
             }
 
-            const audioTracks = aStreams.map((s, i) => ({
-                index: s.index,
-                id: `audio_${i}`,
-                lang: s.tags?.language || s.tags?.LANGUAGE || "und",
-                name: s.tags?.title || s.tags?.language || `Track ${i + 1}`,
-            }));
+
+            const audioTracks = aStreams.map((s, i) => {
+                const lang = s.tags?.language || s.tags?.LANGUAGE || "und"
+                const name = lang && lang !== "und" ? languageNames.of(lang) : s.tags?.title || s.tags?.language || `Track ${i + 1}`
+                return ({
+                    index: s.index,
+                    id: `audio_${i}`,
+                    lang,
+                    name,
+                })
+            });
 
             // Save metadata for on-the-fly segment generation
             const metaJson = {
@@ -1707,12 +1713,12 @@ app.get("/videos", (req, res) => {
             .post("http://localhost:9090", {
                 message: `Device connected ${ip}: ${isDirectConnection ? "Locally" : "Remotely"}`,
             })
-        .then(() => {
-            setTimeout(() => {
-                axios.post("http://localhost:9090", { message: "" });
-            }, 5000);
-        })
-        .catch(() => { });
+            .then(() => {
+                setTimeout(() => {
+                    axios.post("http://localhost:9090", { message: "" });
+                }, 5000);
+            })
+            .catch(() => { });
     }
     res.statusCode = 200;
     res.contentType = "application/json";
