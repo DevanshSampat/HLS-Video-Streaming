@@ -2353,11 +2353,9 @@ app.get("/continue-watching/:uid", async (req, res) => {
     });
     for (const file of userWatchFiles) {
         const videoId = file.split('.')[0];
-        console.log(videoId);
         if (!videos[videoId]) continue;
         const fileData = JSON.parse(fs.readFileSync(path.join(__dirname, "user_watch_data", uid, file), 'utf-8'));
         const thumbFilename = `${videoId}_${fileData.position}.jpg`;
-        console.log(videos[videoId].actualPath);
         await generateVideoThumbnailForSpecificPosition(videos[videoId].actualPath, path.join(__dirname, "thumbnails", thumbFilename), fileData.position);
         dataToSend.push({
             ...videos[videoId],
