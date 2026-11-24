@@ -1,0 +1,447 @@
+const ffmpeg = require('fluent-ffmpeg');
+const path = require('path');
+const fs = require('fs');
+const { ALL } = require('dns');
+const axios = require('axios');
+const { execSync } = require('child_process');
+
+console.log(fs.existsSync(path.join(__dirname, '../ffmpeg')) ? `${__dirname}/../ffmpeg/bin/ffmpeg.exe` : 'ffmpeg');
+ffmpeg.setFfmpegPath(fs.existsSync(path.join(__dirname, '../ffmpeg')) ? `${__dirname}/../ffmpeg/bin/ffmpeg.exe` : 'ffmpeg');
+// === CONFIGURATION ===
+let OUTPUT_DIR = path.join(__dirname, 'streams');
+let INPUT_FILE = '';
+let id = null;
+let lastFileUpdateTime = 0;
+let videoFileSize = 0;
+
+const processingProgress = {};
+
+if (!fs.existsSync(OUTPUT_DIR)) {
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+}
+
+// function shuffleArray(array) {
+//     let currentIndex = array.length;
+//     let randomIndex;
+
+//     // While there remain elements to shuffle.
+//     while (currentIndex !== 0) {
+//         // Pick a remaining element.
+//         randomIndex = Math.floor(Math.random() * currentIndex);
+//         currentIndex--;
+
+//         // And swap it with the current element.
+//         [array[currentIndex], array[randomIndex]] = [
+//             array[randomIndex],
+//             array[currentIndex],
+//         ];
+//     }
+
+//     return array;
+// }
+
+const deleteFolderRecursive = (dirPath) => {
+    if (fs.existsSync(dirPath)) {
+        try {
+            fs.rmSync(dirPath, { recursive: true, force: true });
+        } catch (e) {
+            fs.readdirSync(dirPath).forEach(function (file) {
+                var curPath = dirPath + "/" + file;
+                if (fs.lstatSync(curPath).isDirectory()) {
+                    // recurse
+                    deleteFolderRecursive(curPath);
+                } else {
+                    // delete file
+                    fs.unlinkSync(curPath);
+                }
+            });
+            fs.rmdirSync(dirPath);
+        }
+    }
+};
+
+const generateVideoThumbnail = (videoPath, finalOutputPath) => {
+    return new Promise((resolve) => {
+        const dir = path.dirname(finalOutputPath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        const tempPath = path.join(dir, `temp_${Date.now()}_${path.basename(finalOutputPath)}`);
+
+        const runWithArgs = (inputOptions, onDone) => {
+            ffmpeg(videoPath)
+                .inputOptions(inputOptions)
+                .outputOptions([
+                    '-threads', '1',
+                    '-y',
+                    '-vf', 'scale=360:-2',
+                    '-vframes', '1',
+                    '-update', '1'
+                ])
+                .output(tempPath)
+                .on('end', () => {
+                    if (fs.existsSync(tempPath) && fs.statSync(tempPath).size > 0) {
+                        try {
+                            if (fs.existsSync(finalOutputPath)) fs.unlinkSync(finalOutputPath);
+                            fs.renameSync(tempPath, finalOutputPath);
+                            resolve(true);
+                        } catch (e) {
+                            try {
+                                fs.copyFileSync(tempPath, finalOutputPath);
+                                fs.unlinkSync(tempPath);
+                                resolve(true);
+                            } catch (err) {
+                                resolve(false);
+                            }
+                        }
+                    } else {
+                        onDone(false);
+                    }
+                })
+                .on('error', () => {
+                    onDone(false);
+                })
+                .run();
+        };
+
+        runWithArgs(['-ss', '00:00:01'], (ok) => {
+            if (ok) return;
+            runWithArgs([], (fallbackOk) => {
+                if (fs.existsSync(tempPath)) {
+                    try { fs.unlinkSync(tempPath); } catch (e) { }
+                }
+                resolve(fallbackOk);
+            });
+        });
+    });
+};
+
+
+const ALL_VIDEO_QUALITIES = [
+    { height: 144, bitrate: '200k' },
+    { height: 240, bitrate: '400k' },
+    { height: 360, bitrate: '800k' },
+    { height: 480, bitrate: '1200k' },
+    { height: 720, bitrate: '2500k' },
+    { height: 1080, bitrate: '5000k' },
+    { height: 1440, bitrate: '8000k' },
+    { height: 2160, bitrate: '15000k' }
+];
+
+const MIN_CHUNK_DURATION = 12;
+const MAX_SEGMENT_COUNT = 990;
+
+function getChunkDuration(videoDuration) {
+    const duration = Number(videoDuration);
+    if (!duration || isNaN(duration) || duration <= 0) {
+        return MIN_CHUNK_DURATION;
+    }
+    if (Math.ceil(duration / MIN_CHUNK_DURATION) > MAX_SEGMENT_COUNT) {
+        return Math.max(MIN_CHUNK_DURATION, Math.ceil(duration / (MAX_SEGMENT_COUNT - 1)));
+    }
+    return MIN_CHUNK_DURATION;
+}
+
+let chunkDuration = MIN_CHUNK_DURATION;
+
+function getCommonOptions(segmentDuration) {
+    return [
+        '-hls_time', `${segmentDuration}`,
+        '-hls_list_size', '0',
+        '-hls_playlist_type', 'event', // CHANGED: 'event' allows live playback
+        '-sn', '-dn', '-map_metadata', '-1',
+        '-max_muxing_queue_size', '1024'
+    ];
+}
+
+const processTrackSmartly = (input, mapIndex, output, isVideo, opts = {}, metadata, quality, validQualities) => {
+    return new Promise((resolve, reject) => {
+        processTrack(input, mapIndex, output, isVideo, opts, metadata, quality, validQualities)
+            .then(resolve)
+            .catch(reject);
+    });
+}
+
+// === HELPER: Transcode Single Track ===
+function processTrack(input, mapIndex, output, isVideo, opts = {}, metadata, quality, validQualities) {
+    return new Promise((resolve, reject) => {
+        const cmd = ffmpeg(input).addOutput(output);
+        let specific = ['-map', `0:${mapIndex}`];
+
+        if (isVideo) {
+            // Ensure even height for encoder compatibility
+            const safeHeight = Math.round(opts.height / 2) * 2;
+            specific.push(
+                '-an', '-c:v', 'libx264', '-vf', `scale=-2:${safeHeight}`,
+                '-b:v', opts.bitrate, '-maxrate', opts.bitrate, '-bufsize', `${parseInt(opts.bitrate) * 2}k`,
+                '-profile:v', 'main', '-pix_fmt', 'yuv420p', '-crf', '23', '-preset', 'veryfast',
+                '-force_key_frames', `expr:gte(t,n_forced*${chunkDuration})`, '-sc_threshold', '0',
+                '-threads', '1'
+            );
+        } else {
+            specific.push('-vn', '-c:a', 'aac', '-ac', '2', '-ar', '44100');
+        }
+
+        cmd.outputOptions([...specific, ...getCommonOptions(chunkDuration), '-hls_segment_filename', opts.segPath]);
+
+        let startTime = Date.now();
+        if (isVideo) cmd.on('progress', (p) => {
+            updateCurrentQualityOnProcessingFile(quality, validQualities, p.timemark, metadata);
+        });
+
+        cmd.on('error', (err) => {
+            console.error(`\n❌ FAILED: ${path.basename(output)}`);
+            reject(err);
+        })
+            .on('end', () => {
+                const duration = ((Date.now() - startTime) / 1000 / 60).toFixed(2);
+                if (isVideo) processingProgress[quality.height] = 100;
+                console.log(`\n✅ Completed: ${path.basename(output)} (${duration} min)`);
+                if (isVideo && output.includes('temp_')) {
+                    fs.renameSync(output, output.replace('temp_', ''));
+                }
+                resolve();
+            });
+
+        if (isVideo) {
+            waitForCurrentQualitiesToFinish(quality, validQualities, () => {
+                console.log(`\n▶️  Starting: ${path.basename(output)}`);
+                cmd.run();
+            })
+        }
+        else {
+            console.log(`\n▶️  Starting: ${path.basename(output)}`);
+            cmd.run();
+        }
+    });
+}
+
+// === HELPER: Update Master Playlist ===
+function updateMasterPlaylist(activeQualities, audioTracks) {
+    if (activeQualities.length === 0) return;
+
+    let master = '#EXTM3U\n#EXT-X-VERSION:3\n';
+    audioTracks.forEach((t, i) => {
+        const displayName = t.name && t.lang && t.lang !== 'und' && !t.name.toLowerCase().includes(t.lang.toLowerCase()) ? `${t.name} (${t.lang})` : t.name;
+        master += `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="stereo",LANGUAGE="${t.lang}",NAME="${displayName}",DEFAULT=${i === 0 ? 'YES' : 'NO'},AUTOSELECT=YES,URI="${t.id}.m3u8"\n`;
+    });
+
+    [...activeQualities].sort((a, b) => {
+        return a.height - b.height; // Sort from lowest to highest
+    }).forEach(q => {
+        master += `#EXT-X-STREAM-INF:BANDWIDTH=${(parseInt(q.bitrate) + 192) * 1000},RESOLUTION=1280x${q.height},AUDIO="stereo"\nvideo_${q.height}p.m3u8\n`;
+    });
+
+    fs.writeFileSync(path.join(OUTPUT_DIR, 'master.m3u8'), master);
+    console.log('📝 Master playlist updated (new quality available for streaming).');
+}
+
+// === MAIN ===
+async function main() {
+    const videoDir = path.join(__dirname, 'videos');
+    if (!fs.existsSync(videoDir)) fs.mkdirSync(videoDir);
+    const args = process.argv.slice(2);
+    if (args.length === 0) {
+        console.error("❌ Please provide an input video file using --id=");
+        return;
+    }
+    if (!fs.existsSync(path.join(__dirname, 'videos_index.json'))) return;
+    args.forEach(arg => {
+        if (arg.startsWith('--path=')) {
+            INPUT_FILE = arg.substring('--path='.length).replaceAll('"', '');
+            if (fs.statSync(INPUT_FILE).isDirectory()) {
+                if (path.basename(INPUT_FILE) === "streams") {
+                    INPUT_FILE = undefined;
+                    return;
+                }
+                console.log(`Directory Detected: ${INPUT_FILE}`);
+                fs.readdirSync(INPUT_FILE).forEach(file => {
+                    console.log(`Processing: ${file}`);
+                    execSync(`cd ${__dirname} && node transcode_direct.js --path="${path.join(INPUT_FILE, file)}"`)
+                })
+                INPUT_FILE = undefined;
+                return;
+            }
+        }
+    });
+    if (!INPUT_FILE) return;
+    videoFileSize = fs.existsSync(INPUT_FILE) ? fs.statSync(INPUT_FILE).size : 0;
+    OUTPUT_DIR = path.join(path.dirname(INPUT_FILE), "streams");
+    if (!fs.existsSync(OUTPUT_DIR)) {
+        fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    }
+    OUTPUT_DIR = path.join(OUTPUT_DIR, path.basename(INPUT_FILE).substring(0, path.basename(INPUT_FILE).lastIndexOf(".")));
+    if (!fs.existsSync(OUTPUT_DIR)) {
+        fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    }
+    console.log(`📂 Input: ${path.basename(INPUT_FILE)}`);
+
+    ffmpeg.ffprobe(INPUT_FILE, async (err, metadata) => {
+        if (err) return console.error("❌ Metadata error");
+
+        const vStream = metadata.streams.find(s => s.codec_type === 'video');
+        const aStreams = metadata.streams.filter(s => s.codec_type === 'audio');
+        if (!vStream || aStreams.length === 0) return console.error("❌ Missing streams");
+
+        const validQualities = ALL_VIDEO_QUALITIES.filter(q => q.height <= vStream.height);
+        validQualities.forEach(q => processingProgress[q.height] = 0); // Initialize progress tracking
+        if (validQualities.length === 0 || validQualities[validQualities.length - 1].height !== vStream.height) {
+            validQualities.push({ height: vStream.height, bitrate: '2000k' });
+        }
+        const audioTracks = aStreams.map((s, i) => ({
+            index: s.index, id: `audio_${i}`,
+            lang: s.tags?.language || s.tags?.LANGUAGE || 'und', name: s.tags?.title || s.tags?.language || `Track ${i + 1}`
+        }));
+
+        const args = process.argv.slice(2);
+        let prioritizedQualityIndex = 0;
+        let isQualitySpecified = false;
+        args.forEach(arg => {
+            if (arg.startsWith('--quality=')) {
+                isQualitySpecified = true;
+                const qHeight = parseInt(arg.substring(10));
+                for (let i = 0; i < validQualities.length; i++) {
+                    if (validQualities[i].height <= qHeight) {
+                        prioritizedQualityIndex = i;
+                    }
+                }
+            }
+        });
+        if (!isQualitySpecified) {
+            for (let i = validQualities.length - 1; i >= 0; i--) {
+                const quality = ALL_VIDEO_QUALITIES.find(q => q.height === validQualities[i].height);
+                if (quality && quality.height <= 1080) {
+                    prioritizedQualityIndex = i;
+                    break;
+                }
+            }
+        }
+        // Move prioritized quality to the front
+        if (prioritizedQualityIndex > 0) {
+            const [pq] = validQualities.splice(prioritizedQualityIndex, 1);
+            validQualities.unshift(pq);
+        }
+
+        try {
+            const totalDuration = Number(metadata.format?.duration) || Number(vStream.duration) || 0;
+            chunkDuration = getChunkDuration(totalDuration);
+            console.log(`⏱️  Duration: ${totalDuration}s | Chunk Duration: ${chunkDuration}s`);
+            if (fs.existsSync(path.join(__dirname, "isProcessing.txt"))) {
+                console.log("⏳ Another process is currently running. Retrying in 5 seconds...");
+                setTimeout(() => {
+                    main(); // Retry after delay
+                }, 5000);
+                return;
+            }
+            console.log(`🎥 Video Stream: #${vStream.index}, ${vStream.width}x${vStream.height}, ${vStream.codec_name}`);
+            fs.writeFileSync(path.join(__dirname, "isProcessing.txt"), INPUT_FILE);
+            // PHASE 1: Audio First (Required for master playlist to work correctly)
+            console.log(`\n🎵 PHASE 1: Processing ${audioTracks.length} Audio Tracks...`);
+            for (const t of audioTracks) {
+                processTrackSmartly(INPUT_FILE, t.index, path.join(OUTPUT_DIR, `${t.id}.m3u8`), false, {
+                    segPath: path.join(OUTPUT_DIR, `${t.id}_%03d.ts`)
+                });
+            }
+
+            // PHASE 2: Video Qualities
+            console.log(`\n🎬 PHASE 2: Processing ${validQualities.map(quality => quality.height).toString()} Video Qualities...`);
+            const activeQualities = [...validQualities];
+            updateMasterPlaylist(activeQualities, audioTracks);
+
+            for (const q of validQualities) {
+                console.log(q);
+            }
+
+            let delay = 1000; // Start with 1 second delay
+            for (const q of validQualities) {
+                console.log(`\n🔹 Starting processing for ${q.height}p...`);
+                updateCurrentQualityOnProcessingFile(q, validQualities, "00:00:00", metadata);
+                // Start transcoding this quality. Player will poll and wait for segments.
+                setTimeout(() => {
+                    processTrackSmartly(INPUT_FILE, vStream.index, path.join(OUTPUT_DIR, `video_${q.height}p.m3u8`), true, {
+                        height: q.height, bitrate: q.bitrate, segPath: path.join(OUTPUT_DIR, `video_${q.height}p_%03d.ts`)
+                    }, metadata, q, validQualities).then(() => {
+                        if (!activeQualities.includes(q)) {
+                            activeQualities.push(q);
+                            updateMasterPlaylist(activeQualities, audioTracks);
+                        }
+                    }).catch(err => {
+                        console.error(`❌ Error processing quality ${q.height}p:`, err);
+                    });
+                }, delay);
+                delay += 5000; // Add 5 seconds delay before starting next quality to stagger them
+            }
+            waitForAllQualitiesToFinish(validQualities, () => {
+                fs.writeFileSync(path.join(OUTPUT_DIR, 'createdAt.txt'), `${Date.now()}`);
+                console.log(`\n🏁 All processing complete for ${path.basename(INPUT_FILE)}.`);
+                axios.post('http://localhost:9090', { message: '' }).catch(() => { });
+                fs.unlinkSync(path.join(__dirname, "isProcessing.txt"));
+            });
+        } catch (e) {
+            console.error("\n💥 Process stopped.", e);
+        }
+    });
+}
+
+const waitForAllQualitiesToFinish = (qualities, callback) => {
+    for (const q of qualities) {
+        if (!processingProgress[q.height] || processingProgress[q.height] < 100) {
+            setTimeout(() => waitForAllQualitiesToFinish(qualities, callback), 10000); // Check every 10 seconds
+            return;
+        }
+    }
+    callback();
+}
+
+const waitForCurrentQualitiesToFinish = (currentSelectedQuality, qualities, callback) => {
+    const maxQuality = qualities.reduce((max, q) => q.height > max.height ? q : max, qualities[0]);
+    const approximateProcessedQualitySize = videoFileSize * (currentSelectedQuality.height / maxQuality.height);
+    let currentlyProcessingSize = 0;
+    for (const q of qualities) {
+        if (q.height === currentSelectedQuality.height) break;
+        if ((processingProgress[q.height] || 0) < 100) {
+            currentlyProcessingSize += (videoFileSize * (q.height / maxQuality.height));
+        }
+    }
+    if (currentlyProcessingSize === 0) {
+        callback();
+        return;
+    }
+    if (currentlyProcessingSize + approximateProcessedQualitySize > videoFileSize) {
+        setTimeout(() => waitForCurrentQualitiesToFinish(currentSelectedQuality, qualities, callback), 5000); // Check every 5 seconds
+        return;
+    }
+    callback();
+}
+
+const updateCurrentQualityOnProcessingFile = (quality, allQualities, timeMark, metadata) => {
+    if (fs.existsSync(`${__dirname}/stop_processing.txt`)) {
+        axios.post('http://localhost:9090', { message: '' }).catch(() => { });
+        fs.unlinkSync(`${__dirname}/stop_processing.txt`);
+        fs.unlinkSync(`${__dirname}/isProcessing.txt`);
+        process.exit(0);
+    }
+    let percent = 0;
+    timeMark = timeMark.split('.')[0]; // Remove milliseconds
+    const timeParts = timeMark.split(':').map(Number);
+    if (timeParts.length === 3) {
+        const seconds = timeParts[0] * 3600 + timeParts[1] * 60 + timeParts[2];
+        percent = metadata.format.duration ? ((seconds / Math.ceil(metadata.format.duration)) * 100).toFixed(2) : "0.00";
+    }
+    processingProgress[quality.height] = percent;
+    if (lastFileUpdateTime < Date.now() - 2000) { // Limit updates to every 2 seconds
+        lastFileUpdateTime = Date.now();
+        let dataToPut = INPUT_FILE;
+        for (const q of allQualities) {
+            dataToPut += `\n${q.height}p (${processingProgress[q.height]}%)`;
+        }
+        fs.writeFileSync(path.join(__dirname, "isProcessing.txt"), dataToPut);
+        let message = `Processing ${INPUT_FILE.substring(INPUT_FILE.replaceAll('\\', '/').lastIndexOf('/') + 1)}`
+        for (const q of allQualities) {
+            message += `\n${q.height}p: ${processingProgress[q.height]}%`;
+        }
+        axios.post('http://localhost:9090', { message }).catch(() => { });
+    }
+}
+
+main();
