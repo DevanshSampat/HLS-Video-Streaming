@@ -536,12 +536,11 @@ app.get("/api/peers", (req, res) => {
 function filterManifest(originalM3u8, maxQuality) {
     const lines = originalM3u8.split("\n");
     let output = [];
-    let finalLine = "";
     let keepNextUri = true;
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
-        if (!line) continue;
+        if (!line || !keepNextUri) continue;
 
         if (line.startsWith("#EXT-X-STREAM-INF")) {
             // It's a variant stream. Check resolution.
@@ -551,13 +550,13 @@ function filterManifest(originalM3u8, maxQuality) {
             if (resMatch && resMatch[1]) {
                 const height = parseInt(resMatch[1], 10);
                 if (height <= maxQuality) {
-                    finalLine = line + "\n" + lines[++i];
+                    output.push(line);
+                } else {
                     keepNextUri = false;
                 }
             } else {
                 // If no resolution tag, standard says keep it or decide a default.
                 // Usually safe to keep if you can't determine quality.
-                finalLine = line;
                 keepNextUri = true;
             }
         } else if (line.startsWith("#")) {
@@ -570,7 +569,6 @@ function filterManifest(originalM3u8, maxQuality) {
             }
         }
     }
-    output.push(finalLine);
 
     return output.join("\n");
 }
@@ -1597,21 +1595,21 @@ app.use("/stream", async (req, res, next) => {
             .replaceAll("\\", "/");
         if (filePath.endsWith(".m3u8")) {
             res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-            // if (filePath.endsWith("master.m3u8")) {
-            //     if (req.query?.maxQuality) {
-            //         if (fs.existsSync(filePath)) {
-            //             console.log(
-            //                 `Filtering manifest for max quality: ${req.query.maxQuality}p`,
-            //             );
-            //             return res.send(
-            //                 filterManifest(
-            //                     fs.readFileSync(filePath, "utf8"),
-            //                     req.query.maxQuality,
-            //                 ),
-            //             );
-            //         }
-            //     }
-            // }
+            if (filePath.endsWith("master.m3u8")) {
+                if (req.query?.maxQuality) {
+                    if (fs.existsSync(filePath)) {
+                        console.log(
+                            `Filtering manifest for max quality: ${req.query.maxQuality}p`,
+                        );
+                        return res.send(
+                            filterManifest(
+                                fs.readFileSync(filePath, "utf8"),
+                                req.query.maxQuality,
+                            ),
+                        );
+                    }
+                }
+            }
         } else if (filePath.endsWith(".ts") && !id.includes("android-screen-sharing")) {
             const parsed = parseSegmentPath(filePath);
             if (parsed && parsed.type === "video") {
